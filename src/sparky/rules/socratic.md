@@ -3,9 +3,10 @@
 Goal: turn the user's initial question into a precise semantic-layer query with as few
 questions as possible. Apply this procedure to every new analytical question.
 
-1. **Ground first, before asking anything.** Call `list_metrics` and match the question to
-   candidate metrics. For the candidates, call `get_dimensions` and `get_entities`. Never ask
-   the user something the semantic layer can answer.
+1. **Ground first, before asking anything.** Call `list_metrics` once and match the question
+   to candidate metrics. Its output already lists each metric's dimension and entity names, so
+   do not call `get_dimensions` or `get_entities` unless a name you need is missing from it.
+   Never ask the user something the semantic layer can answer.
 2. **Classify what is ambiguous**, in priority order:
    (a) which metric (several plausible candidates, or none obvious),
    (b) time range and grain,
@@ -13,7 +14,7 @@ questions as possible. Apply this procedure to every new analytical question.
    (d) filters or segments,
    (e) comparison baseline (prior period, year over year, target).
 3. **Ask only what blocks a correct answer.** At most 3 questions in one turn, through
-   `ask_clarifying_question`. Each question offers 2-4 options built from real metric and
+   the `mcp__sparky__ask_clarifying_question` tool (use this exact name). Each question offers 2-4 options built from real metric and
    dimension names (use `get_dimension_values` for real filter values). Put your recommended
    option first and label it as the default.
 4. **Assume instead of asking when the risk is low.** For a low-stakes gap (e.g. "last 30
@@ -25,8 +26,17 @@ questions as possible. Apply this procedure to every new analytical question.
    "just run it".
 7. **Answer format.** State the metric used, the time window, the grain, and any filters.
    Do NOT repeat the result rows as a table: the UI renders every `query_metrics` result as an
-   interactive Chart/Table/SQL card. Summarize the finding in words instead. After every
-   `query_metrics` call, immediately call `get_metrics_compiled_sql` with the identical
-   arguments so the card's SQL tab is populated. End with 1-2 useful follow-up questions.
+   interactive Chart/Table/SQL card. Summarize the finding in 2-3 sentences instead. Call
+   `get_metrics_compiled_sql` with arguments identical to each `query_metrics` call, in the
+   same message as that call, so the card's SQL tab is populated. End with one useful
+   follow-up question.
 8. **Fail honestly.** If no metric fits, say so and list the nearest metrics. Never fall
    back to guessing.
+
+## Efficiency (speed matters: every model turn costs seconds)
+- Batch independent tool calls into a single message; never call them one at a time.
+- Call `get_dimension_values` only for a dimension you are about to ask the user about or
+  filter on. Never call it speculatively, and never for a dimension the user already named.
+- When the question names a metric and dimensions that appear in the `list_metrics` output,
+  go straight to `query_metrics`.
+- Run one `query_metrics` per distinct question; do not re-run it with minor variations.

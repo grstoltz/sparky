@@ -31,3 +31,9 @@ def test_options_and_prompt():
     assert "Socratic" in prompt and "read-only" in prompt
     opts = build_options(Settings(), ClarifyBroker(lambda e: asyncio.sleep(0)))
     assert set(opts.mcp_servers) == {"dbt", "sparky"}
+
+
+def test_agent_is_isolated_from_account_connectors_and_builtins():
+    opts = build_options(Settings(), ClarifyBroker(lambda e: asyncio.sleep(0)))
+    assert opts.strict_mcp_config is True
+    assert opts.tools == []

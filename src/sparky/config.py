@@ -9,7 +9,6 @@ DBT_TOOLS = [
     "get_dimension_values",
     "query_metrics",
     "get_metrics_compiled_sql",
-    "list_saved_queries",
 ]
 
 CLARIFY_TOOL = "mcp__sparky__ask_clarifying_question"
