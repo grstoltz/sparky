@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sparky</title>
+<style>
+/* ASU palette: Maroon #8C1D40, Gold #FFC627, Gray 1-7 */
+:root{--maroon:#8C1D40;--gold:#FFC627;--bg:#fff;--fg:#191919;--muted:#484848;--card:#fafafa;--line:#d0d0d0;--accent:var(--maroon);--user-fg:#fff;--focus:var(--maroon)}
+@media(prefers-color-scheme:dark){:root{--bg:#191919;--fg:#fafafa;--muted:#bfbfbf;--card:#262626;--line:#484848;--accent:var(--gold);--user-fg:#191919;--focus:var(--gold)}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Arial,Helvetica,sans-serif;display:flex;flex-direction:column;height:100vh}
+header{display:flex;align-items:center;gap:14px;padding:10px 20px;background:var(--maroon);color:#fff;border-bottom:4px solid var(--gold)}
+header img{height:36px;width:auto;display:block}
+header .title{font-weight:700;font-size:18px;letter-spacing:.2px}header .sub{font-size:13px;opacity:.85;margin-left:auto}
+#log{flex:1;overflow:auto;padding:16px;max-width:820px;width:100%;margin:0 auto}
+.msg{margin:10px 0;padding:10px 14px;border-radius:8px;white-space:pre-wrap;overflow-x:auto}
+.user{background:var(--accent);color:var(--user-fg);margin-left:20%}.bot{background:var(--card);border:1px solid var(--line)}
+.tool{font-size:12px;color:var(--muted);margin:4px 0}
+.clarify{border:2px solid var(--gold);border-left-width:6px;border-radius:8px;padding:12px;margin:10px 0;background:var(--card)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+button{font:inherit;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:999px;padding:6px 14px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--maroon);background:var(--gold);color:#191919}
+button:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);max-width:820px;width:100%;margin:0 auto}
+form button{background:var(--gold);color:#191919;border-color:var(--gold);font-weight:700}
+input{flex:1;font:inherit;padding:10px 14px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}th{background:var(--maroon);color:#fff}
+.bot{white-space:normal}.bot>:first-child{margin-top:0}.bot>:last-child{margin-bottom:0}
+.bot table{display:block;overflow-x:auto;max-width:100%}.bot code{background:var(--line);padding:1px 4px;border-radius:4px}
+.bot pre{background:var(--line);padding:10px;border-radius:6px;overflow-x:auto}.bot pre code{background:none;padding:0}
+.layout{flex:1;display:flex;min-height:0}.chat{flex:1;display:flex;flex-direction:column;min-width:0}
+#side{display:none;width:48%;border-left:1px solid var(--line);overflow:auto;padding:16px;background:var(--card)}
+.layout.open #side{display:block}
+.rcard{border:1px solid var(--line);border-radius:8px;margin:10px 0;background:var(--bg);overflow:hidden}
+.rhead{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
+.rhead .ttl{font-weight:700;font-size:13px;margin-right:auto}
+.rhead button{padding:3px 10px;font-size:13px}.rhead button.on{background:var(--maroon);color:#fff;border-color:var(--maroon)}
+.rbody{padding:10px;overflow-x:auto}.rbody canvas{max-height:320px}
+.rbody pre{margin:0;white-space:pre-wrap;font-size:12px}
+.stat{font-size:28px;font-weight:700;color:var(--accent)}.stat small{display:block;font-size:13px;color:var(--muted);font-weight:400}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+</head><body>
+<header><img src="/assets/logo.svg" alt="" onerror="this.remove()"><span class="title">Sparky</span><span class="sub">Ask your data</span></header>
+<div class="layout" id="layout"><div class="chat"><div id="log"></div>
+<form id="f"><input id="q" placeholder="Ask a question about your data…" autocomplete="off" autofocus><button>Send</button></form></div><aside id="side"></aside></div>
+<script>
+let sid=null, bot=null;
+// Render model output as markdown; sanitize, and fall back to plain text if the libraries failed to load.
+function md(t){return window.marked&&window.DOMPurify?DOMPurify.sanitize(marked.parse(t)):t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+const log=document.getElementById('log');
+function add(cls,text){const d=document.createElement('div');d.className=cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+async function answer(qid,text,box){
+  box.querySelectorAll('button,input').forEach(e=>e.disabled=true);
+  add('msg user',text);
+  await fetch('/answer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,question_id:qid,answer:text})});
+}
+function clarify(ev){
+  const box=document.createElement('div');box.className='clarify';
+  box.append(Object.assign(document.createElement('div'),{textContent:ev.question}));
+  const chips=document.createElement('div');chips.className='chips';
+  ev.options.forEach((o,i)=>{const b=document.createElement('button');b.type='button';b.textContent=o+(i===0?' (suggested)':'');b.onclick=()=>answer(ev.id,o,box);chips.append(b)});
+  box.append(chips);
+  if(ev.allow_free_text){
+    const inp=document.createElement('input');inp.placeholder='Or type your own…';inp.style.marginTop='8px';inp.style.width='100%';
+    inp.onkeydown=e=>{if(e.key==='Enter'&&inp.value.trim()){e.preventDefault();answer(ev.id,inp.value.trim(),box)}};
+    box.append(inp);
+  }
+  log.append(box);log.scrollTop=log.scrollHeight;bot=null;
+}
+
+// ---- Explore-style result cards: Chart / Table / SQL ----
+const PAL=['#8C1D40','#FFC627','#00A3E0','#78BE20','#FF7F32','#747474'];
+const cards={};
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const fmt=v=>typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:2}):String(v??'');
+function csv(cols,rows){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';return [cols.map(q).join(',')].concat(rows.map(r=>cols.map(c=>q(r[c])).join(','))).join('\n')}
+function download(name,text){const a=el('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));a.download=name;a.click()}
+function resultCard(ev){
+  const cols=ev.columns,rows=ev.rows,metrics=ev.metrics.filter(m=>cols.includes(m));
+  const dims=cols.filter(c=>!metrics.includes(c));
+  const timeDim=dims.find(c=>/metric_time|_dt$|date/i.test(c))||(ev.group_by.find(g=>g.type==='time_dimension')||{}).name;
+  const card=el('div','rcard'),head=el('div','rhead'),body=el('div','rbody');
+  head.append(el('span','ttl',metrics.join(', ')||'Result'));
+  const views={};let chart=null;
+  const sql=el('pre',null,'Loading SQL…');
+  const canChart=!!window.Chart&&rows.length>1&&metrics.length>0&&dims.length>0;
+  function show(name){
+    Object.entries(views).forEach(([k,b])=>b.classList.toggle('on',k===name));
+    if(chart){chart.destroy();chart=null}
+    body.replaceChildren();
+    if(name==='Chart'){
+      if(!canChart){const m=metrics[0];const st=el('div','stat',fmt(rows[0]?.[m]));st.append(el('small',null,m));body.append(st);return}
+      const cv=el('canvas');body.append(cv);
+      const labels=rows.map(r=>dims.map(d=>String(r[d]).slice(0,10)).join(' · '));
+      const line=!!timeDim;
+      chart=new Chart(cv,{type:line?'line':'bar',data:{labels,datasets:metrics.map((m,i)=>({label:m,data:rows.map(r=>r[m]),borderColor:PAL[i%6],backgroundColor:PAL[i%6],tension:.2}))},options:{responsive:true,plugins:{legend:{display:metrics.length>1}},scales:{y:{beginAtZero:true}}}});
+    }else if(name==='Table'){
+      const t=el('table'),h=el('tr');cols.forEach(c=>h.append(el('th',null,c)));t.append(h);
+      rows.forEach(r=>{const tr=el('tr');cols.forEach(c=>tr.append(el('td',null,fmt(r[c]))));t.append(tr)});body.append(t);
+    }else body.append(sql);
+  }
+  ['Chart','Table','SQL'].forEach(n=>{const b=el('button',null,n);b.type='button';b.onclick=()=>show(n);views[n]=b;head.append(b)});
+  const dl=el('button',null,'CSV');dl.type='button';dl.onclick=()=>download('sparky-result.csv',csv(cols,rows));
+  const cp=el('button',null,'Copy SQL');cp.type='button';cp.onclick=()=>navigator.clipboard?.writeText(sql.textContent);
+  const op=el('button',null,'Open');op.type='button';
+  op.onclick=()=>{const L=document.getElementById('layout'),side=document.getElementById('side');
+    if(card.parentElement===side){log.append(card);L.classList.remove('open');op.textContent='Open'}
+    else{side.replaceChildren(card);L.classList.add('open');op.textContent='Close'}};
+  head.append(dl,cp,op);card.append(head,body);
+  card.setSql=t=>{sql.textContent=t};
+  show(canChart?'Chart':'Table');
+  return card;
+}
+let busy=null;
+function setBusy(on){if(on&&!busy){busy=add('tool','Working…')}else if(!on&&busy){busy.remove();busy=null}if(busy)log.append(busy)}
+function handle(ev){
+  if(ev.type==='session')sid=ev.session_id;
+  else if(ev.type==='text'){bot=add('msg bot','');bot.innerHTML=md(ev.text)}
+  else if(ev.type==='tool_use'&&!ev.name.endsWith('ask_clarifying_question'))add('tool','⚙ '+ev.name.replace('mcp__',''));
+  else if(ev.type==='result_table'){const c=resultCard(ev);cards[ev.key]=c;log.append(c);log.scrollTop=log.scrollHeight}
+  else if(ev.type==='sql'){cards[ev.key]?.setSql(ev.sql)}
+  else if(ev.type==='clarify')clarify(ev);
+  else if(ev.type==='error')add('msg bot','Error: '+ev.message);
+  else if(ev.type==='done')setBusy(false);
+  if(ev.type!=='done'&&ev.type!=='clarify')setBusy(true);else if(ev.type==='clarify')setBusy(false);
+}
+document.getElementById('f').onsubmit=async e=>{
+  e.preventDefault();const q=document.getElementById('q');const text=q.value.trim();if(!text)return;q.value='';
+  add('msg user',text);
+  const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,message:text})});
+  const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){const {done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true}).replace(/\r\n/g,'\n');
+    let i;while((i=buf.indexOf('\n\n'))>=0){const chunk=buf.slice(0,i);buf=buf.slice(i+2);
+      const line=chunk.split('\n').find(l=>l.startsWith('data:'));if(line){try{handle(JSON.parse(line.slice(5).trim()))}catch(err){console.error('event failed',err);add('tool','⚠ display error: '+err.message)}}}}
+};
+</script></body></html>
