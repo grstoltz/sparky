@@ -45,6 +45,7 @@ table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8p
 <form id="f"><input id="q" placeholder="Ask a question about your data…" autocomplete="off" autofocus><button>Send</button></form></div><aside id="side"></aside></div>
 <script>
 let sid=null, bot=null;
+fetch('/warm',{method:'POST'}).catch(()=>{});
 // Render model output as markdown; sanitize, and fall back to plain text if the libraries failed to load.
 function md(t){return window.marked&&window.DOMPurify?DOMPurify.sanitize(marked.parse(t)):t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 const log=document.getElementById('log');
@@ -111,11 +112,17 @@ function resultCard(ev){
   show(canChart?'Chart':'Table');
   return card;
 }
-let busy=null;
+let busy=null,streaming=null,streamBuf='';
 function setBusy(on){if(on&&!busy){busy=add('tool','Working…')}else if(!on&&busy){busy.remove();busy=null}if(busy)log.append(busy)}
 function handle(ev){
+  if(ev.type==='tool_use'||ev.type==='clarify'||ev.type==='result_table'||ev.type==='done')streaming=null;
   if(ev.type==='session')sid=ev.session_id;
-  else if(ev.type==='text'){bot=add('msg bot','');bot.innerHTML=md(ev.text)}
+  else if(ev.type==='text_delta'){
+    if(!streaming){streaming=add('msg bot','');streamBuf=''}
+    streamBuf+=ev.text;streaming.innerHTML=md(streamBuf);log.scrollTop=log.scrollHeight}
+  else if(ev.type==='text'){
+    // The complete block replaces the streamed bubble (if any) so text never appears twice.
+    bot=streaming||add('msg bot','');streaming=null;bot.innerHTML=md(ev.text)}
   else if(ev.type==='tool_use'&&!ev.name.endsWith('ask_clarifying_question'))add('tool','⚙ '+ev.name.replace('mcp__',''));
   else if(ev.type==='result_table'){const c=resultCard(ev);cards[ev.key]=c;log.append(c);log.scrollTop=log.scrollHeight}
   else if(ev.type==='sql'){cards[ev.key]?.setSql(ev.sql)}

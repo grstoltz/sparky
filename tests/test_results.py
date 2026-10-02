@@ -34,3 +34,15 @@ def test_sql_pairs_by_key():
 def test_sql_unwraps_result_envelope():
     evs = _run("mcp__dbt__get_metrics_compiled_sql", json.dumps({"result": "SELECT 1"}))
     assert next(e for e in evs if e["type"] == "sql")["sql"] == "SELECT 1"
+
+
+def test_text_delta_streams_from_partial_messages():
+    from claude_agent_sdk import StreamEvent
+
+    def ev(delta, parent=None):
+        return StreamEvent(uuid="u", session_id="s", parent_tool_use_id=parent,
+                           event={"type": "content_block_delta", "index": 0, "delta": delta})
+
+    assert map_message(ev({"type": "text_delta", "text": "Hel"})) == [{"type": "text_delta", "text": "Hel"}]
+    assert map_message(ev({"type": "input_json_delta", "partial_json": "{"})) == []
+    assert map_message(ev({"type": "text_delta", "text": "x"}, parent="t9")) == []
