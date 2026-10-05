@@ -23,3 +23,32 @@ def test_only_semantic_layer_tools_exposed():
     env = dbt_mcp_config(Settings(dbt_host="h"), get_mode("arm3"))["env"]
     assert env["DBT_MCP_ENABLE_TOOLS"].split(",") == DBT_TOOLS
     assert not any(k.startswith("DISABLE_") for k in env)
+
+
+def test_dbt_mcp_runs_through_launcher():
+    cfg = dbt_mcp_config(Settings(dbt_host="h"))
+    assert cfg["args"] == ["-m", "sparky.dbt_mcp_launcher"]
+
+
+def test_launcher_drops_empty_dbt_vars_only():
+    from sparky.dbt_mcp_launcher import clean_env
+    env = {"DBT_PROD_ENV_ID": "", "DBT_TOKEN": "", "MULTICELL_ACCOUNT_PREFIX": "", "DBT_HOST": "h",
+           "ANTHROPIC_API_KEY": "", "PATH": "/bin"}
+    out = clean_env(env)
+    assert {k: out[k] for k in ("DBT_HOST", "ANTHROPIC_API_KEY", "PATH")} == {
+        "DBT_HOST": "h", "ANTHROPIC_API_KEY": "", "PATH": "/bin"}
+    assert not any(k in out for k in ("DBT_PROD_ENV_ID", "DBT_TOKEN", "MULTICELL_ACCOUNT_PREFIX"))
+
+
+def test_launcher_sets_ca_bundle_unless_given():
+    import certifi
+    from sparky.dbt_mcp_launcher import clean_env
+    assert clean_env({})["SSL_CERT_FILE"] == certifi.where()
+    assert clean_env({"SSL_CERT_FILE": "/corp/ca.pem"})["SSL_CERT_FILE"] == "/corp/ca.pem"
+
+
+def test_mcp_startup_timeout_allows_browser_login():
+    from sparky.agent import MCP_STARTUP_TIMEOUT_MS, build_options
+    from sparky.tools.clarify import ClarifyBroker
+    opts = build_options(Settings(dbt_host="h"), ClarifyBroker(lambda e: None), get_mode("arm2"))
+    assert int(opts.env["MCP_TIMEOUT"]) == MCP_STARTUP_TIMEOUT_MS >= 120_000

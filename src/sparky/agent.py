@@ -1,7 +1,11 @@
 """One Agent SDK session per conversation, exposed as an async stream of UI events."""
 import asyncio
+import csv
+import io
 import json
+import logging
 import re
+import sys
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -11,12 +15,16 @@ from claude_agent_sdk import (
 )
 
 from .config import Settings
+from . import pii
 from .context import load_context_cards, render_for_prompt
 from .modes import Mode, get_mode
 from .tools.cite import make_cite_tool
 from .tools.clarify import ClarifyBroker, build_sparky_server, make_clarify_tool
 
+log = logging.getLogger(__name__)
 RULES_DIR = Path(__file__).parent / "rules"
+MCP_STARTUP_TIMEOUT_MS = 5 * 60 * 1000
+TURN_FAILED = "Something went wrong while answering. The details are in the server log."
 
 
 def load_system_prompt(mode: Mode | None = None, pack: dict[str, Any] | None = None) -> str:
@@ -41,7 +49,9 @@ def dbt_mcp_config(s: Settings, mode: Mode | None = None) -> dict[str, Any]:
         # Service-token auth. With OAuth, dbt-mcp opens a browser and the user picks the project.
         env["DBT_TOKEN"] = s.dbt_token
         env["DBT_PROD_ENV_ID"] = s.dbt_prod_env_id
-    return {"type": "stdio", "command": "uvx", "args": ["dbt-mcp"], "env": env}
+    # Go through the launcher rather than `uvx dbt-mcp` directly: it strips empty DBT_* values
+    # (which crash dbt-mcp at startup) and runs from a directory without a .env. See the module.
+    return {"type": "stdio", "command": sys.executable, "args": ["-m", "sparky.dbt_mcp_launcher"], "env": env}
 
 
 _SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
@@ -56,14 +66,33 @@ def is_read_only_sql(sql: str) -> bool:
     return bool(_SQL_START.match(s)) and ";" not in s and not _SQL_WRITE.search(s)
 
 
+def _deny(reason: str) -> dict[str, Any]:
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason,
+    }}
+
+
 async def _sql_guard(input_data, tool_use_id, context):
     sql = (input_data.get("tool_input") or {}).get("sql", "")
-    if is_read_only_sql(sql):
+    if not is_read_only_sql(sql):
+        return _deny("Only a single read-only SELECT statement is allowed.")
+    reason = pii.check_sql(sql)
+    return _deny(reason) if reason else {}
+
+
+async def _semantic_guard(input_data, tool_use_id, context):
+    """No grouping by, filtering on or listing values of student identifiers (see pii.py)."""
+    reason = pii.check_semantic_args(input_data.get("tool_input") or {})
+    return _deny(reason) if reason else {}
+
+
+async def _result_scrubber(input_data, tool_use_id, context):
+    """Drop identifier columns and redact PII values from dbt tool results before the model reads them."""
+    response = input_data.get("tool_response")
+    clean = pii.scrub_payload(response)
+    if clean == response:
         return {}
-    return {"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "permissionDecision": "deny",
-        "permissionDecisionReason": "Only a single read-only SELECT statement is allowed.",
-    }}
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedMCPToolOutput": clean}}
 
 
 def build_options(s: Settings, broker: ClarifyBroker, mode: Mode | None = None,
@@ -77,7 +106,14 @@ def build_options(s: Settings, broker: ClarifyBroker, mode: Mode | None = None,
         if mode.cite:
             tools.append(make_cite_tool(pack or {"metrics": {}}, broker.emit))
         mcp["sparky"] = build_sparky_server(tools)
-    hooks = {"PreToolUse": [HookMatcher(matcher="mcp__dbt__execute_sql", hooks=[_sql_guard])]}
+    hooks = {
+        "PreToolUse": [
+            HookMatcher(matcher="mcp__dbt__execute_sql", hooks=[_sql_guard]),
+            HookMatcher(matcher="mcp__dbt__(query_metrics|get_metrics_compiled_sql|get_dimension_values)",
+                        hooks=[_semantic_guard]),
+        ],
+        "PostToolUse": [HookMatcher(matcher="mcp__dbt__.*", hooks=[_result_scrubber])],
+    }
     return ClaudeAgentOptions(
         system_prompt=load_system_prompt(mode, pack),
         mcp_servers=mcp,
@@ -96,7 +132,12 @@ def build_options(s: Settings, broker: ClarifyBroker, mode: Mode | None = None,
         setting_sources=[],  # don't inherit user/project Claude Code settings
         # Load the (small, allow-listed) MCP tool schemas up front instead of spending a
         # model turn on ToolSearch to discover them.
-        env={"ENABLE_TOOL_SEARCH": "false"},
+        env={
+            "ENABLE_TOOL_SEARCH": "false",
+            # dbt-mcp's first start runs a browser OAuth login. Give it minutes, not the CLI's
+            # default seconds, or the session comes up without any dbt tools.
+            "MCP_TIMEOUT": str(MCP_STARTUP_TIMEOUT_MS),
+        },
     )
 
 
@@ -111,6 +152,7 @@ class Session:
         self._connected = False
         self._lock = asyncio.Lock()
         self._calls: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._labels: dict[str, dict[str, str]] = {}  # metric name -> display names, from list_metrics
 
     async def connect(self) -> None:
         """Start the CLI and dbt-mcp processes. Idempotent; safe to call ahead of the first question."""
@@ -123,10 +165,12 @@ class Session:
             await self.connect()
             await self.client.query(text)
             async for msg in self.client.receive_response():
-                for ev in map_message(msg, self._calls):
+                for ev in map_message(msg, self._calls, self._labels):
                     await self.events.put(ev)
-        except Exception as e:  # surface to the UI instead of hanging the stream
-            await self.events.put({"type": "error", "message": str(e)})
+        except Exception:  # surface to the UI instead of hanging the stream
+            # The exception text can quote warehouse data, so it goes to the server log, not the browser.
+            log.exception("turn failed")
+            await self.events.put({"type": "error", "message": TURN_FAILED})
         finally:
             await self.events.put({"type": "done"})
 
@@ -245,8 +289,34 @@ def parse_sql_result(text: str) -> tuple[list[dict[str, Any]], list[str], list[s
     return rows, cols, nums
 
 
-def map_message(msg: Any, calls: dict[str, tuple[str, dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
+def _short_label(metadata: str | None) -> str | None:
+    try:
+        meta = json.loads(metadata or "{}")
+    except ValueError:
+        return None
+    return meta.get("short_label") if isinstance(meta, dict) else None
+
+
+def parse_metric_labels(text: str) -> dict[str, dict[str, str]]:
+    """Display names from list_metrics' CSV (after optional `# Note:` lines): the dbt `label` titles a
+    chart, and `config.meta.short_label` (in the `metadata` column) names the metric in tooltips."""
+    lines = [ln for ln in unwrap_text(text).splitlines() if not ln.startswith("#")]
+    out: dict[str, dict[str, str]] = {}
+    try:
+        for r in csv.DictReader(io.StringIO("\n".join(lines))):
+            names = {"label": r.get("label"), "short_label": _short_label(r.get("metadata"))}
+            names = {k: v for k, v in names.items() if v}
+            if r.get("name") and names:
+                out[r["name"]] = names
+    except csv.Error:
+        return {}
+    return out
+
+
+def map_message(msg: Any, calls: dict[str, tuple[str, dict[str, Any]]] | None = None,
+                labels: dict[str, dict[str, str]] | None = None) -> list[dict[str, Any]]:
     calls = calls if calls is not None else {}
+    labels = labels if labels is not None else {}
     out: list[dict[str, Any]] = []
     if isinstance(msg, StreamEvent):
         ev = msg.event or {}
@@ -269,14 +339,22 @@ def map_message(msg: Any, calls: dict[str, tuple[str, dict[str, Any]]] | None = 
             name, args = calls.get(b.tool_use_id, ("", {}))
             if b.is_error:
                 continue
-            if name.endswith("query_metrics"):
+            if name.endswith("list_metrics"):
+                # Merge, so a narrow re-listing without metadata keeps a short label seen earlier.
+                for m, names in parse_metric_labels(_result_text(b)).items():
+                    labels.setdefault(m, {}).update(names)
+            elif name.endswith("query_metrics"):
                 rows = parse_rows(_result_text(b))
                 if rows is not None:
+                    metrics = args.get("metrics", [])
                     out.append({
                         "type": "result_table", "key": query_key(args), "id": b.tool_use_id,
-                        "metrics": args.get("metrics", []), "rows": rows,
+                        "metrics": metrics, "rows": rows,
                         "columns": list(rows[0].keys()) if rows else [],
                         "group_by": args.get("group_by") or [],
+                        "labels": {m: labels[m]["label"] for m in metrics if "label" in labels.get(m, {})},
+                        "short_labels": {m: labels[m]["short_label"] for m in metrics
+                                         if "short_label" in labels.get(m, {})},
                     })
             elif name.endswith("execute_sql"):
                 # Arm 1: show raw-SQL results in the same card; the SQL is the tool input. The tool's

@@ -52,6 +52,17 @@ def test_session_event_carries_type_so_ui_can_store_id(monkeypatch):
     assert evs[0]["type"] == "session" and evs[0]["session_id"]
 
 
+def test_session_event_reports_whether_server_session_was_resumed(monkeypatch):
+    """The UI continues stored chats after a reload; a restarted server means a fresh agent."""
+    with _client(monkeypatch) as c:
+        fresh = _events(c.post("/chat", json={"message": "x", "mode": "arm2"}))[0]
+        assert fresh["resumed"] is False
+        stale = _events(c.post("/chat", json={"message": "x", "mode": "arm2", "session_id": "gone"}))[0]
+        assert stale["session_id"] == "gone" and stale["resumed"] is False
+        again = _events(c.post("/chat", json={"message": "x", "mode": "arm2", "session_id": "gone"}))[0]
+        assert again["resumed"] is True
+
+
 def test_modes_endpoint_lists_three_arms(monkeypatch):
     with _client(monkeypatch) as c:
         body = c.get("/modes").json()
@@ -99,3 +110,34 @@ def test_live_hang_without_transcript_surfaces_error(monkeypatch):
     with _client(monkeypatch, factory=hung, live_timeout_s=0.05) as c:
         evs = _events(c.post("/chat", json={"message": "unrecorded", "mode": "arm1"}))
     assert any(e["type"] == "error" for e in evs) and evs[-1]["type"] == "done"
+
+
+EMPLID = "1234567890"
+LEAKY = [
+    {"type": "tool_use", "id": "t1", "name": "mcp__dbt__execute_sql", "input": {"sql": f"... {EMPLID}"}},
+    {"type": "result_table", "key": "k", "metrics": ["n"], "columns": ["emplid", "program", "n"],
+     "rows": [{"emplid": EMPLID, "program": "Nursing", "n": 2}], "group_by": []},
+    {"type": "text_delta", "text": "Student 12345"}, {"type": "text_delta", "text": "67890 is enrolled."},
+    {"type": "text", "text": f"Student {EMPLID} (a@asu.edu) is enrolled."},
+    {"type": "done"},
+]
+
+
+def test_live_answers_never_carry_ids_or_contact_details(monkeypatch):
+    leaky = lambda mode: FakeSession(mode, events=LEAKY)
+    with _client(monkeypatch, factory=leaky) as c:
+        resp = c.post("/chat", json={"message": "x", "mode": "arm1"})
+    assert EMPLID not in resp.text and "a@asu.edu" not in resp.text
+    evs = _events(resp)
+    card = next(e for e in evs if e["type"] == "result_table")
+    assert card["columns"] == ["program", "n"] and card["rows"] == [{"program": "Nursing", "n": 2}]
+    assert "".join(e["text"] for e in evs if e["type"] == "text_delta") == "Student [redacted] is enrolled."
+    assert "input" not in next(e for e in evs if e["type"] == "tool_use") and evs[-1]["type"] == "done"
+
+
+def test_replayed_transcripts_are_scrubbed_too(monkeypatch, tmp_path):
+    path = tmp_path / "t.yaml"
+    path.write_text(json.dumps({"arm3": [{"question": "who", "events": LEAKY}]}))  # JSON is valid YAML
+    with _client(monkeypatch, transcripts_path=path) as c:
+        resp = c.post("/chat", json={"message": "who", "mode": "arm3", "mock": True})
+    assert "replay" in resp.text and EMPLID not in resp.text and "a@asu.edu" not in resp.text

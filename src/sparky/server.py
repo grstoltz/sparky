@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from . import pii
 from .agent import Session, SessionPool
 from .config import Settings
 from .mock import find_transcript, load_transcripts, replay
@@ -87,6 +88,10 @@ async def chat(body: ChatIn):
     sid = body.session_id or uuid.uuid4().hex
     mock = body.mock or settings.mock_mode
     transcript = find_transcript(load_transcripts(settings.transcripts_path), mode.id, body.message)
+    # Whether the client's session_id still points at a live agent. The UI stores chats in the browser
+    # and continues them after a reload; if the server restarted meanwhile it gets a fresh agent under
+    # the same id, with no memory of the chat, and this flag lets the UI say so.
+    resumed = bool(body.session_id) and sid in sessions
 
     session = None
     if not mock:
@@ -96,8 +101,13 @@ async def chat(body: ChatIn):
         if session is None:
             session = sessions[sid] = await get_pool(mode.id).take()
 
+    def sse(events):
+        return [{"event": ev["type"], "data": json.dumps(ev)} for ev in events]
+
     async def stream():
-        yield {"event": "session", "data": json.dumps({"type": "session", "session_id": sid, "mode": mode.id})}
+        guard = pii.EventGuard()  # every answer event passes through it, live or replayed
+        yield {"event": "session", "data": json.dumps(
+            {"type": "session", "session_id": sid, "mode": mode.id, "resumed": resumed})}
         fallback = mock
         if not mock:
             agen = session.ask(body.message).__aiter__()
@@ -123,9 +133,12 @@ async def chat(body: ChatIn):
                         break
                     if ev["type"] in ("text", "text_delta", "result_table"):
                         shown = True
-                    yield {"event": ev["type"], "data": json.dumps(ev)}
+                    for out in sse(guard(ev)):
+                        yield out
             finally:
                 await agen.aclose()
+            for out in sse(guard.close()):
+                yield out
         if fallback:
             if transcript is None:
                 msg = "No recorded transcript for this arm and question"
@@ -133,7 +146,10 @@ async def chat(body: ChatIn):
                 yield {"event": "done", "data": json.dumps({"type": "done"})}
                 return
             async for ev in replay(transcript):
-                yield {"event": ev["type"], "data": json.dumps(ev)}
+                for out in sse(guard(ev)):
+                    yield out
+            for out in sse(guard.close()):
+                yield out
 
     return EventSourceResponse(stream())
 

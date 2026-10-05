@@ -1,12 +1,18 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sparky</title>
+<script>
+// Saved theme choice ('light'/'dark'); none means follow the device. Set before first paint to avoid a flash.
+try{const t=localStorage.getItem('sparky.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}
+</script>
 <style>
 /* ASU palette. Maroon = primary actions; gold = highlights only (mode pill, citation text). */
 :root{--primary:#8C1D40;--primary-foreground:#fff;--accent:#FFC627;--accent-foreground:#2B1D00;--background:#FAFAF9;--foreground:#1A1A1A;--border:#E5E2DD;
 --card:#fff;--muted:#6b665e;--bubble:#EDEAE5;--chip:#2B1D00;--chip-fg:#FFC627;--brand:var(--primary);--focus:var(--primary);
---maroon:var(--primary);--gold:var(--accent);--bg:var(--background);--fg:var(--foreground);--line:var(--border)}
-@media(prefers-color-scheme:dark){:root{--background:#161513;--foreground:#FAFAF9;--border:#3a3732;--card:#201e1b;--muted:#bdb8ae;--bubble:#33302b;--chip:#FFC627;--chip-fg:#2B1D00;--brand:var(--accent);--focus:var(--accent)}}
+--maroon:var(--primary);--gold:var(--accent);--bg:var(--background);--fg:var(--foreground);--line:var(--border);color-scheme:light}
+/* Dark: the device preference unless the header toggle chose light; or the toggle chose dark. */
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--background:#161513;--foreground:#FAFAF9;--border:#3a3732;--card:#201e1b;--muted:#bdb8ae;--bubble:#33302b;--chip:#FFC627;--chip-fg:#2B1D00;--brand:var(--accent);--focus:var(--accent);color-scheme:dark}}
+:root[data-theme=dark]{--background:#161513;--foreground:#FAFAF9;--border:#3a3732;--card:#201e1b;--muted:#bdb8ae;--bubble:#33302b;--chip:#FFC627;--chip-fg:#2B1D00;--brand:var(--accent);--focus:var(--accent);color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 'Manrope',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;display:flex;flex-direction:column;height:100vh}
 header{display:flex;align-items:center;gap:12px;padding:0 28px;height:60px;background:var(--primary);color:#fff;flex:none}
@@ -31,6 +37,10 @@ header .title{font-weight:700;font-size:20px;letter-spacing:.1px}
 .bot table{display:block;overflow-x:auto;max-width:100%}.bot code{background:var(--line);padding:1px 5px;border-radius:5px}
 .bot pre{background:var(--line);padding:10px;border-radius:10px;overflow-x:auto}.bot pre code{background:none;padding:0}
 .tool{font-size:12px;color:var(--muted);margin:2px 0 8px 4px}
+.status{font-style:italic;letter-spacing:.01em}
+.status span{display:inline-block;transition:opacity .25s ease,transform .25s ease}
+.status span.out{opacity:0;transform:translateY(3px)}
+@media (prefers-reduced-motion:reduce){.status span{transition:none}}
 .clarify{border:1px solid var(--line);border-radius:20px;padding:18px 22px;margin:0 0 18px;background:var(--card)}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 button{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;padding:8px 16px;cursor:pointer}
@@ -54,6 +64,33 @@ form button svg{width:20px;height:20px}
 table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}th{background:var(--primary);color:#fff}
 #side{display:none;width:48%;border-left:1px solid var(--line);overflow:auto;padding:16px;background:var(--card)}
 .layout.open #side{display:block}
+/* Chat history sidebar (stored in this browser only) */
+#nav{width:260px;flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--card)}
+.layout.nav-closed #nav{display:none}
+.nav-toggle{width:36px;height:36px;padding:0;border-radius:10px;background:transparent;border-color:transparent;color:#fff;display:grid;place-items:center;flex:none}
+.nav-toggle:hover:not(:disabled){color:#fff;background:rgba(255,255,255,.14);border-color:transparent}
+.nav-toggle svg{width:22px;height:22px}
+#theme-toggle{margin-left:4px}
+header button:focus-visible{outline-color:#fff}
+.new-chat{margin:12px 12px 6px;text-align:left}
+#chat-list{list-style:none;margin:0;padding:4px 8px;overflow:auto;flex:1}
+#chat-list .empty{font-size:13px;color:var(--muted);padding:8px 10px}
+.chat-row{display:block;width:100%;text-align:left;border-color:transparent;border-radius:12px;padding:8px 10px;background:transparent;font-weight:500;margin:0 0 2px}
+.chat-row:hover:not(:disabled){background:var(--bubble);color:inherit;border-color:transparent}
+.chat-row.active{background:var(--bubble)}
+.chat-row .t{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-row .m{font-size:12px;color:var(--muted);font-weight:500}
+.nav-foot{border-top:1px solid var(--line);padding:10px 12px;font-size:13px;color:var(--muted)}
+.nav-foot button{font-size:13px;padding:5px 12px}#clear-confirm button{margin-left:6px}
+.notice{font-size:12px;color:var(--muted);text-align:center;margin:0 0 14px}
+/* "Suggested follow-ups" lists in an answer become clickable prompts */
+.followups{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin:10px 0 4px}
+.followup{font-weight:500;font-size:14px;text-align:left;border-radius:14px;padding:8px 14px;line-height:1.4;max-width:100%}
+.followup::after{content:' \2192';color:var(--muted)}
+.followup:hover:not(:disabled)::after{color:inherit}
+button:disabled{cursor:default;opacity:.6}
+.clarify .chips button.on{background:var(--primary);color:#fff;border-color:var(--primary);opacity:1}
+@media(max-width:900px){.layout{position:relative}#nav{position:absolute;inset:0 auto 0 0;z-index:5;box-shadow:4px 0 16px rgba(0,0,0,.15)}}
 .rcard{border:1px solid var(--line);border-radius:20px;margin:0 0 18px;background:var(--card);overflow:hidden}
 .rhead{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .rhead .ttl{font-weight:700;font-size:14px;margin-right:auto}
@@ -66,37 +103,59 @@ table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8p
 .supporting .rcard{margin:0 0 14px}
 .rbody{padding:14px;overflow-x:auto}.rbody canvas{max-height:320px}
 .rbody pre{margin:0;white-space:pre-wrap;font-size:12px}
+.stats{display:flex;flex-wrap:wrap;gap:14px 36px}
 .stat{font-size:28px;font-weight:700;color:var(--brand)}.stat small{display:block;font-size:13px;color:var(--muted);font-weight:400}
 </style>
 <script src="/assets/charts.js"></script>
+<script src="/assets/history.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head><body>
-<header><span class="mark"><img src="/assets/logo.svg" alt="" onerror="this.remove()"><span id="mark-s">S</span></span><span class="title">Sparky</span><span id="replay" title="Replaying a recorded transcript">RECORDED</span><label class="badge" id="badge"><span class="dot"></span><span id="badge-text"></span><select id="mode" aria-label="Mode"></select></label></header>
-<div class="layout" id="layout"><div class="chat"><div id="log"></div>
+<header><button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle chat history" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><span class="mark"><img src="/assets/logo.svg" alt="" onerror="this.remove()"><span id="mark-s">S</span></span><span class="title">Sparky</span><span id="replay" title="Replaying a recorded transcript">RECORDED</span><label class="badge" id="badge"><span class="dot"></span><span id="badge-text"></span><select id="mode" aria-label="Mode"></select></label><button id="theme-toggle" class="nav-toggle" type="button"></button></header>
+<div class="layout" id="layout"><nav id="nav" aria-label="Chat history">
+<button id="new-chat" class="new-chat" type="button">+ New chat</button>
+<ul id="chat-list"></ul>
+<div class="nav-foot"><button id="clear-history" type="button">Clear history</button><span id="clear-confirm" hidden>Clear all chats? <button id="clear-yes" type="button">Clear</button><button id="clear-no" type="button">Cancel</button></span></div>
+</nav><div class="chat"><div id="log"></div>
 <form id="f"><input id="q" placeholder="Ask about enrollment, melt, or a program…" autocomplete="off" autofocus><button aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>
 <footer class="disclaimer"><strong>Powered by EdPlus Action Lab.</strong> Contact Action Lab for analysis confirmation and validation. Sparky uses AI.</footer></div><aside id="side"></aside></div>
 <script>
 let sid=null, bot=null, mode=null, modes=[];
+// Chat history (web/assets/history.js): the open chat record, the store, and replay/save state.
+let chat=null, store=null, replaying=false, saveTimer=null, pendingSid=null, warnedQuota=false;
+const pendingSql={};  // compiled SQL that arrived before its result card
 {const img=document.querySelector('.mark img');if(img){const hide=()=>{const t=document.getElementById('mark-s');if(t)t.style.display='none'};img.complete&&img.naturalWidth?hide():img.addEventListener('load',hide)}}
 const params=new URLSearchParams(location.search), mock=params.get('mock')==='1';
 // Render model output as markdown; sanitize, and fall back to plain text if the libraries failed to load.
 function md(t){return window.marked&&window.DOMPurify?DOMPurify.sanitize(marked.parse(t)):t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 const log=document.getElementById('log');
 function add(cls,text){const d=document.createElement('div');d.className=cls;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+// Year-over-year wording in the question (or a clarification answer) splits charts into one series per
+// year. `turn` counts questions in this chat: from the second on, cards open on the data, not a chart,
+// unless the question (`ask`, plus any clarification answers) asks for one.
+let intent=null,turn=0,ask='';
+function startQuestion(text){turn++;ask=text;intent=SparkyCharts.intentOf(text)}
 async function answer(qid,text,box){
-  box.querySelectorAll('button,input').forEach(e=>e.disabled=true);
+  intent=SparkyCharts.intentOf(text)||intent;ask+=' '+text;
+  box.querySelectorAll('button,input').forEach(e=>e.disabled=true);box.classList.add('answered');
+  box.querySelectorAll('.chips button').forEach(b=>{if(b.dataset.opt===text)b.classList.add('on')});
   add('msg user',text);
-  await fetch('/answer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,question_id:qid,answer:text})});
+  if(chat){SparkyHistory.answerClarify(chat,qid,text,Date.now());flushSave()}
+  setBusy(true);
+  const r=await fetch('/answer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,question_id:qid,answer:text})});
+  if(!r.ok){handle({type:'error',message:'That question has expired. Ask again to continue.'});handle({type:'done'})}
 }
 function clarify(ev){
-  const box=document.createElement('div');box.className='clarify';
+  // A stored question (replayed from history) cannot be answered any more: show it settled.
+  const settled=replaying||ev.answer!=null;
+  const box=document.createElement('div');box.className='clarify'+(settled?' answered':'');
   box.append(Object.assign(document.createElement('div'),{textContent:ev.question}));
   const chips=document.createElement('div');chips.className='chips';
-  ev.options.forEach((o,i)=>{const b=document.createElement('button');b.type='button';b.textContent=o+(i===0?' (suggested)':'');b.onclick=()=>answer(ev.id,o,box);chips.append(b)});
+  ev.options.forEach((o,i)=>{const b=document.createElement('button');b.type='button';b.textContent=o+(i===0?' (suggested)':'');b.dataset.opt=o;
+    if(settled){b.disabled=true;if(o===ev.answer)b.classList.add('on')}else b.onclick=()=>answer(ev.id,o,box);chips.append(b)});
   box.append(chips);
-  if(ev.allow_free_text){
+  if(ev.allow_free_text&&!settled){
     const inp=document.createElement('input');inp.placeholder='Or type your own…';inp.style.marginTop='8px';inp.style.width='100%';
     inp.onkeydown=e=>{if(e.key==='Enter'&&inp.value.trim()){e.preventDefault();answer(ev.id,inp.value.trim(),box)}};
     box.append(inp);
@@ -105,9 +164,31 @@ function clarify(ev){
 }
 
 // ---- Explore-style result cards: Chart / Table / SQL ----
+// ---- Theme: follows the device until the header toggle picks one (stored as sparky.theme) ----
+const sysDark=matchMedia('(prefers-color-scheme: dark)'),THEME_KEY='sparky.theme';
+const isDark=()=>{const t=document.documentElement.dataset.theme;return t?t==='dark':sysDark.matches};
+const MOON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+const SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+function applyTheme(){
+  const dark=isDark(),b=document.getElementById('theme-toggle');
+  b.innerHTML=dark?SUN:MOON;b.setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');b.title=b.getAttribute('aria-label');
+  if(window.Chart){const cs=getComputedStyle(document.documentElement);
+    Chart.defaults.color=cs.getPropertyValue('--muted').trim();Chart.defaults.borderColor=cs.getPropertyValue('--line').trim()}
+  document.querySelectorAll('.rcard').forEach(c=>c.redraw&&c.redraw());
+}
+// Toggling back to the device's own theme forgets the choice, so the page follows the device again.
+function toggleTheme(){
+  const next=isDark()?'light':'dark',root=document.documentElement;
+  try{if(next===(sysDark.matches?'dark':'light')){delete root.dataset.theme;localStorage.removeItem(THEME_KEY)}
+    else{root.dataset.theme=next;localStorage.setItem(THEME_KEY,next)}}
+  catch(e){root.dataset.theme=next}   // storage blocked: still switch for this page
+  applyTheme();
+}
+document.getElementById('theme-toggle').onclick=toggleTheme;
+sysDark.addEventListener('change',applyTheme);
+applyTheme();
 // Maroon reads poorly on the dark background, so lead with gold there.
-const DARK=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches;
-const PAL=DARK?['#FFC627','#00A3E0','#78BE20','#FF7F32','#E59BB1','#BFBFBF']:['#8C1D40','#FFC627','#00A3E0','#78BE20','#FF7F32','#747474'];
+const palette=()=>isDark()?['#FFC627','#00A3E0','#78BE20','#FF7F32','#E59BB1','#BFBFBF']:['#8C1D40','#FFC627','#00A3E0','#78BE20','#FF7F32','#747474'];
 const cards={};
 // Arm 3 answers comparisons with a summary, so when a turn runs several queries their cards are tucked
 // into one collapsed "Supporting queries" expander instead of stacking up as intermediate results.
@@ -128,25 +209,29 @@ const fmt=v=>typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigi
 function csv(cols,rows){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';return [cols.map(q).join(',')].concat(rows.map(r=>cols.map(c=>q(r[c])).join(','))).join('\n')}
 function download(name,text){const a=el('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));a.download=name;a.click()}
 function resultCard(ev){
-  const shape=SparkyCharts.shapeOf(ev),cols=shape.cols,rows=shape.rows,metrics=shape.metrics;
+  const shape=SparkyCharts.shapeOf(ev,intent),cols=shape.cols,rows=shape.rows,metrics=shape.metrics;
   const card=el('div','rcard'),head=el('div','rhead'),body=el('div','rbody');
-  head.append(el('span','ttl',metrics.join(', ')||'Result'));
-  const views={};let chart=null;
+  const label=m=>SparkyCharts.metricLabel(shape,m);
+  head.append(el('span','ttl',metrics.map(label).join(', ')||'Result'));
+  const views={};let chart=null,view=null;
   const sql=el('pre',null,'Loading SQL…');
   // Chart types that fit this result (best default first); none if Chart.js did not load.
   const kinds=window.Chart?SparkyCharts.kinds(shape):[];
   const canChart=kinds.length>0;let kind=kinds[0];
+  // One row: the Chart view shows each metric as a big number instead.
+  const canStat=rows.length===1&&metrics.length>0;
   const sel=el('select','ctype');sel.setAttribute('aria-label','Chart type');
   kinds.forEach(k=>sel.append(Object.assign(document.createElement('option'),{value:k,textContent:SparkyCharts.KINDS[k]})));
   sel.onchange=()=>{kind=sel.value;show('Chart')};
   function show(name){
+    view=name;
     Object.entries(views).forEach(([k,b])=>b.classList.toggle('on',k===name));
     sel.style.display=name==='Chart'&&kinds.length>1?'':'none';
     if(chart){chart.destroy();chart=null}
     body.replaceChildren();
     if(name==='Chart'){
-      if(canChart){const cv=el('canvas');body.append(cv);chart=new Chart(cv,SparkyCharts.config(kind,shape,PAL))}
-      else if(rows.length===1&&metrics.length){const m=metrics[0];const st=el('div','stat',fmt(rows[0][m]));st.append(el('small',null,m));body.append(st)}
+      if(canChart){const cv=el('canvas');body.append(cv);chart=new Chart(cv,SparkyCharts.config(kind,shape,palette()))}
+      else if(canStat){const w=el('div','stats');metrics.forEach(m=>{const st=el('div','stat',fmt(rows[0][m]));st.append(el('small',null,SparkyCharts.shortLabel(shape,m)));w.append(st)});body.append(w)}
       else body.append(el('p',null,'No chart available for this result. See the Table view.'));
     }else if(name==='Table'){
       const t=el('table'),h=el('tr');cols.forEach(c=>h.append(el('th',null,c)));t.append(h);
@@ -162,7 +247,11 @@ function resultCard(ev){
     else{side.replaceChildren(card);L.classList.add('open');op.textContent='Close'}};
   head.append(sel,dl,cp,op);card.append(head,body);
   card.setSql=t=>{sql.textContent=t};
-  show(canChart?'Chart':'Table');
+  card.redraw=()=>{if(view==='Chart')show('Chart')};   // theme change: new palette and axis colors
+  // Open on the chart (or big number) whenever there is one; the table when nothing is numeric, or for a
+  // follow-up question that did not ask for a chart: there the data is the answer.
+  const dataOnly=turn>1&&!SparkyCharts.wantsChart(ask);
+  show(canStat||(canChart&&!dataOnly)?'Chart':'Table');
   return card;
 }
 const CLIP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg>';
@@ -175,51 +264,175 @@ function addCite(cs){
     d.append(sm,el('div','cite-text',c.text+(c.metric?' ('+c.metric+')':'')));wrap.append(d)});
   if(bot&&bot.parentNode===log)bot.after(wrap);else log.append(wrap);log.scrollTop=log.scrollHeight;
 }
-// Each arm gets a fresh conversation so one arm's context can never leak into another's answers.
-function setMode(m,reset){
+// Empty the conversation view. Leaves sid, the chat record, the mode and the URL alone.
+function clearView(){
+  bot=null;streaming=null;streamBuf='';setBusy(false);resetTurn();log.replaceChildren();turn=0;ask='';intent=null;
+  for(const k in cards)delete cards[k];for(const k in pendingSql)delete pendingSql[k];
+  document.getElementById('side').replaceChildren();document.getElementById('layout').classList.remove('open');
+  document.getElementById('replay').style.display='none';
+}
+function showMode(m){
   mode=m;const info=modes.find(x=>x.id===m)||{label:m};
   const b=document.getElementById('badge');b.className='badge '+m;document.getElementById('badge-text').textContent=info.label;
   document.getElementById('mode').value=m;
-  if(reset){sid=null;bot=null;streaming=null;busy=null;resetTurn();log.replaceChildren();document.getElementById('layout').classList.remove('open');document.getElementById('replay').style.display='none'}
   history.replaceState(null,'','?'+new URLSearchParams({...Object.fromEntries(params),mode:m}));
   if(!mock)fetch('/warm?mode='+m,{method:'POST'}).catch(()=>{});
+}
+// Switching arms starts a new chat so one arm's context can never leak into another's answers.
+function setMode(m,reset){showMode(m);if(reset)newChat()}
+
+// ---- Chat history: stored in this browser (localStorage), one record per chat ----
+function safeStorage(){try{const ls=window.localStorage;ls.getItem('x');return ls}catch(e){return {getItem(){throw e},setItem(){throw e},removeItem(){}}}}
+function newChat(){flushSave();chat=null;sid=null;pendingSid=null;clearView();store.setActive(null);renderSidebar();document.getElementById('q').focus()}
+// A record exists only once a message is sent, so browsing never leaves empty chats behind.
+function ensureChat(){if(!chat){chat=SparkyHistory.newChat({mode,mock,now:Date.now()});store.setActive(chat.id)}}
+function record(item){
+  if(replaying||!chat)return;
+  if(item.role==='user')SparkyHistory.appendItem(chat,item,Date.now());
+  else if(!SparkyHistory.recordEvent(chat,item,Date.now()))return;
+  scheduleSave();
+}
+function scheduleSave(){if(!saveTimer)saveTimer=setTimeout(()=>{saveTimer=null;flushSave()},250)}
+function flushSave(){
+  if(saveTimer){clearTimeout(saveTimer);saveTimer=null}
+  if(!chat||!chat.items.length)return;
+  const r=store.put(chat,streaming?streamBuf:'');   // the stream so far is kept as a provisional bubble
+  if(!r.ok&&!warnedQuota){warnedQuota=true;console.warn('Chat history is full; this chat is not being saved')}
+  renderSidebar();
+}
+function openChat(id){
+  flushSave();const c=store.get(id);if(!c||(chat&&c.id===chat.id))return;
+  chat=c;sid=c.sid;pendingSid=null;clearView();showMode(c.mode);
+  replaying=true;try{rebuild(c)}finally{replaying=false}
+  setBusy(false);
+  if(SparkyHistory.isInterrupted(c))add('notice','This answer was interrupted. Ask again to continue.');
+  store.setActive(id);renderSidebar();log.scrollTop=log.scrollHeight;
+  if(narrow.matches)toggleNav(false,false);
+}
+// Replay the stored items through the same renderer as live events. resetTurn() at each user
+// message keeps Arm 3's "Supporting queries" grouping identical to what was shown live.
+function rebuild(c){
+  c.items.forEach(it=>{
+    if(it.role==='user'){streaming=null;bot=null;resetTurn();startQuestion(it.text);add('msg user',it.text)}
+    else try{handle(it)}catch(err){console.error('replay failed',err)}
+  });
+}
+function renderSidebar(){
+  const list=document.getElementById('chat-list'),now=Date.now(),chats=store.list();
+  if(!chats.length){list.replaceChildren(el('li','empty','No chats yet'));return}
+  list.replaceChildren(...chats.map(c=>{
+    const li=el('li'),b=el('button','chat-row'+(chat&&c.id===chat.id?' active':''));b.type='button';
+    b.append(el('span','t',c.title),el('span','m',SparkyHistory.modeShort(modes,c.mode)+' \u00b7 '+SparkyHistory.relativeTime(c.updated,now)));
+    b.onclick=()=>openChat(c.id);li.append(b);return li}));
+}
+const narrow=matchMedia('(max-width:900px)');
+function toggleNav(open,persist=true){
+  const L=document.getElementById('layout');const closed=open==null?!L.classList.contains('nav-closed'):!open;
+  L.classList.toggle('nav-closed',closed);document.getElementById('nav-toggle').setAttribute('aria-expanded',String(!closed));
+  if(persist)store.setNav(closed?'closed':'open');
+}
+function wireHistory(){
+  document.getElementById('new-chat').onclick=()=>newChat();
+  document.getElementById('nav-toggle').onclick=()=>toggleNav();
+  const btn=document.getElementById('clear-history'),conf=document.getElementById('clear-confirm');
+  const confirming=on=>{btn.hidden=on;conf.hidden=!on};
+  btn.onclick=()=>confirming(true);
+  document.getElementById('clear-no').onclick=()=>confirming(false);
+  // Not newChat(): that would save the open chat again right after wiping the store.
+  document.getElementById('clear-yes').onclick=()=>{store.clear();chat=null;sid=null;pendingSid=null;clearView();confirming(false);renderSidebar()};
+  addEventListener('pagehide',flushSave);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushSave()});
+  setInterval(renderSidebar,60000);   // keep the relative times honest
 }
 async function init(){
   const r=await (await fetch('/modes')).json();modes=r.modes;
   const sel=document.getElementById('mode');
   modes.forEach(m=>sel.append(Object.assign(document.createElement('option'),{value:m.id,textContent:m.label})));
   sel.onchange=()=>setMode(sel.value,true);
-  setMode(modes.some(x=>x.id===params.get('mode'))?params.get('mode'):r.default,false);
+  store=SparkyHistory.createStore(safeStorage());wireHistory();
+  const pref=store.nav;toggleNav(pref?pref==='open':!narrow.matches,false);
+  // Reopen the last chat, unless the URL asks for a different arm (demo links open a fresh page).
+  const urlMode=modes.some(x=>x.id===params.get('mode'))?params.get('mode'):null;
+  const active=store.get(store.activeId);
+  if(active&&(!urlMode||urlMode===active.mode))openChat(active.id);
+  else{showMode(urlMode||r.default);renderSidebar()}
 }
-let busy=null,streaming=null,streamBuf='';
-function setBusy(on){if(on&&!busy){busy=add('tool','Working…')}else if(!on&&busy){busy.remove();busy=null}if(busy)log.append(busy)}
+let busy=null,busyTimer=null,busyIdx=0,streaming=null,streamBuf='';
+// Shown while the agent works, instead of listing the tools it calls. One word every ~2s.
+const STATUS=['Cogitating','Triangulating','Reticulating splines','Tessellating','Interpolating','Extrapolating',
+  'Orthogonalizing','Factorizing','Convolving','Deconvolving','Marginalizing','Eigen-decomposing','Diagonalizing',
+  'Integrating by parts','Differentiating','Normalizing','Permuting','Cross-tabulating','Regressing to the mean',
+  'Bayesian updating','Fourier transforming','Ruminating','Pondering','Percolating','Noodling','Scrutinizing',
+  'Hypothesizing','Squinting at dimensions','Herding metrics','Counting Sun Devils','Calibrating the abacus',
+  'Consulting the semantic layer','Asymptotically approaching an answer','Carrying the one','Sharpening pencils',
+  'Untangling joins','Polishing the crystal ball','Dusting off the ledger','Taking the square root of everything'];
+// Crossfade: fade the old word out, swap, fade in. A CSS transition (not an animation) so moving the
+// row in the DOM never replays it.
+function statusTick(){if(!busy)return;const sp=busy.firstChild;sp.classList.add('out');
+  setTimeout(()=>{if(!busy)return;sp.textContent=STATUS[busyIdx++%STATUS.length]+'\u2026';sp.classList.remove('out')},250)}
+function setBusy(on){
+  if(on&&!busy){busy=add('tool status','');busyIdx=Math.floor(Math.random()*STATUS.length);
+    busy.append(el('span',null,STATUS[busyIdx++%STATUS.length]+'\u2026'));busyTimer=setInterval(statusTick,2200)}
+  else if(!on&&busy){clearInterval(busyTimer);busyTimer=null;busy.remove();busy=null}
+  // Keep the row last, but only move it when something was added after it: re-inserting a node each
+  // streamed token is what made the words flicker.
+  if(busy&&log.lastElementChild!==busy)log.append(busy)}
+// Send a prompt exactly as if the user had typed it (used by follow-up chips).
+function send(text){if(busy)return;const q=document.getElementById('q');q.value=text;document.getElementById('f').requestSubmit()}
+// Rule 10 in the Socratic prompt ends comparisons with a 'Suggested follow-ups' list; make each
+// item a button so the user can ask it with one click. Works on live and replayed answers.
+function linkFollowUps(bubble){
+  bubble.querySelectorAll('h1,h2,h3,h4,h5,p>strong:only-child').forEach(h=>{
+    if(!/^suggested follow-?ups?:?$/i.test(h.textContent.trim()))return;
+    const holder=h.tagName==='STRONG'?h.parentElement:h;const list=holder.nextElementSibling;
+    if(!list||(list.tagName!=='UL'&&list.tagName!=='OL'))return;
+    const chips=el('div','followups');
+    [...list.children].forEach(li=>{const t=li.textContent.replace(/\s+/g,' ').trim();if(!t)return;
+      const b=el('button','followup',t);b.type='button';b.onclick=()=>send(t);chips.append(b)});
+    if(chips.children.length)list.replaceWith(chips);
+  });
+}
 function handle(ev){
   if(ev.type==='tool_use'||ev.type==='clarify'||ev.type==='result_table'||ev.type==='done')streaming=null;
-  if(ev.type==='session')sid=ev.session_id;
+  if(ev.type==='session'){sid=ev.session_id;if(chat)chat.sid=sid;
+    if(pendingSid&&ev.resumed===false&&!(chat&&chat.mock))add('notice',"Server restarted; Sparky won't remember earlier messages in this chat.");
+    pendingSid=null}
   else if(ev.type==='text_delta'){
     if(!streaming){streaming=add('msg bot','');streamBuf=''}
     streamBuf+=ev.text;streaming.innerHTML=md(streamBuf);log.scrollTop=log.scrollHeight}
   else if(ev.type==='text'){
     // The complete block replaces the streamed bubble (if any) so text never appears twice.
-    bot=streaming||add('msg bot','');streaming=null;bot.innerHTML=md(ev.text)}
-  else if(ev.type==='tool_use'&&!/ask_clarifying_question|cite_context$/.test(ev.name))add('tool','⚙ '+ev.name.replace('mcp__',''));
-  else if(ev.type==='result_table'){const c=resultCard(ev);cards[ev.key]=c;placeCard(c);log.scrollTop=log.scrollHeight}
-  else if(ev.type==='sql'){cards[ev.key]?.setSql(ev.sql)}
+    bot=streaming||add('msg bot','');streaming=null;bot.innerHTML=md(ev.text);linkFollowUps(bot)}
+  else if(ev.type==='result_table'){const c=resultCard(ev);cards[ev.key]=c;placeCard(c);
+    if(pendingSql[ev.key]){c.setSql(pendingSql[ev.key]);delete pendingSql[ev.key]}log.scrollTop=log.scrollHeight}
+  else if(ev.type==='sql'){if(cards[ev.key])cards[ev.key].setSql(ev.sql);else pendingSql[ev.key]=ev.sql}
   else if(ev.type==='cite')addCite(ev.citations);
   else if(ev.type==='replay')document.getElementById('replay').style.display='inline-block';
   else if(ev.type==='clarify')clarify(ev);
   else if(ev.type==='error')add('msg bot','Error: '+ev.message);
   else if(ev.type==='done'){setBusy(false);resetTurn()}
+  if(replaying)return;
   if(ev.type!=='done'&&ev.type!=='clarify')setBusy(true);else if(ev.type==='clarify')setBusy(false);
+  record(ev);
 }
 document.getElementById('f').onsubmit=async e=>{
   e.preventDefault();const q=document.getElementById('q');const text=q.value.trim();if(!text)return;q.value='';
-  add('msg user',text);resetTurn();
-  const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,mode,mock,message:text})});
+  ensureChat();const myChat=chat;
+  add('msg user',text);record({role:'user',text});flushSave();resetTurn();startQuestion(text);
+  pendingSid=sid;setBusy(true);
+  const fail=m=>{if(chat===myChat){handle({type:'error',message:m});handle({type:'done'})}};
+  let r;
+  try{r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,mode:myChat.mode,mock:myChat.mock,message:text})})}
+  catch(err){fail('Could not reach the server: '+err.message);return}
+  if(!r.ok){let m='HTTP '+r.status;try{m=(await r.json()).detail||m}catch(_){}fail(m);return}
   const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
-  for(;;){const {done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true}).replace(/\r\n/g,'\n');
-    let i;while((i=buf.indexOf('\n\n'))>=0){const chunk=buf.slice(0,i);buf=buf.slice(i+2);
-      const line=chunk.split('\n').find(l=>l.startsWith('data:'));if(line){try{handle(JSON.parse(line.slice(5).trim()))}catch(err){console.error('event failed',err);add('tool','⚠ display error: '+err.message)}}}}
+  try{
+    for(;;){const {done,value}=await reader.read();if(done)break;
+      if(chat!==myChat){reader.cancel();return}   // the user opened another chat mid-answer
+      buf+=dec.decode(value,{stream:true}).replace(/\r\n/g,'\n');
+      let i;while((i=buf.indexOf('\n\n'))>=0){const chunk=buf.slice(0,i);buf=buf.slice(i+2);
+        const line=chunk.split('\n').find(l=>l.startsWith('data:'));if(line){try{handle(JSON.parse(line.slice(5).trim()))}catch(err){console.error('event failed',err);add('tool','⚠ display error: '+err.message)}}}}
+  }catch(err){fail('Connection lost: '+err.message)}
 };
 init();
 </script></body></html>

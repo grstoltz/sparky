@@ -99,15 +99,47 @@ in the top right.
 ### Choosing a mode
 There are three ways, in order of precedence:
 
-1. **The pill.** Click it and pick an arm. This clears the chat and starts a brand-new conversation, so
-   one arm's context can never leak into another arm's answer.
+1. **The pill.** Click it and pick an arm. This starts a brand-new chat in that arm (the previous chat stays
+   in the history sidebar), so one arm's context can never leak into another arm's answer.
 2. **The URL.** `http://localhost:8000/?mode=arm2` opens straight into that arm. Open one browser tab per arm
    (`?mode=arm1`, `?mode=arm2`, `?mode=arm3`) if you want to flip between them without re-typing.
 3. **The server default.** `SPARKY_MODE=arm2` in `.env` sets the arm used when the URL does not specify one
    (default `arm3`).
 
 Every conversation is tied to one mode. Sending a message to an existing session under a different mode is
-rejected (HTTP 409); the UI avoids this by resetting the session when you switch.
+rejected (HTTP 409); the UI avoids this by starting a new chat when you switch.
+
+### Chat history
+
+The sidebar lists past chats. They are stored in the browser only (`localStorage`, nothing on the server), so
+they survive a refresh and reopen on the same machine and browser profile. **Clear history** wipes them all.
+Reopening a chat lets you keep talking in it. The agent's memory of a chat lives in the server process, so
+after `make restart` a reopened chat shows the transcript but the agent starts fresh; the UI says so with a
+"Server restarted" note on the next answer.
+
+### Privacy: aggregates only
+
+Sparky never shows individual student identifiers (EMPLID, student id, ASURITE), names, emails or
+contact details. The rules live in `src/sparky/pii.py` and are applied at four layers:
+
+1. **Before a query runs** (PreToolUse hooks in `agent.py`): arm 1 SQL may use identifier columns only
+   inside `COUNT(...)`, and `SELECT *` is refused. In arms 2 and 3, `query_metrics` and related tools can't group by,
+   filter on or list values of the `student` entity or any identifier dimension. The model is told why,
+   so it answers with an aggregate or explains that individual records aren't available.
+2. **Before the model reads a result** (PostToolUse hook): identifier columns are dropped and ID-like
+   values (10-digit ids, SSNs, emails, phone numbers) are redacted.
+3. **Before anything reaches the browser** (`EventGuard` in `server.py`): every event, live or replayed
+   from `demo/transcripts.yaml`, is scrubbed the same way. Tool inputs are not sent, and unexpected
+   errors show a generic message (details go to the server log).
+4. **In the prompts** (`rules/*.md`): the model is told to answer with aggregates only.
+
+To block another identifier, add its column name to `_PERSON_FIELD` in `pii.py` and a case to
+`tests/test_pii.py`. Small counts are not suppressed.
+
+### Light and dark mode
+
+The page follows the device's light/dark setting. The sun/moon button in the header overrides it, and the choice
+is remembered in this browser. Toggling back to match the device clears the override.
 
 ### What each arm should look like on screen
 - **Arm 1:** the model discovers tables with SQL, so it makes many `execute_sql` calls. Only the final,
@@ -246,13 +278,14 @@ Sparky drives the bundled Claude Code CLI, so it uses whatever login Claude Code
 | Charts missing but tables work | Chart.js loads from cdnjs; it needs internet access. The Table and SQL views still work |
 | First question is slow (8s+ to first event) | The arm was not warmed. Run the warm step above, and avoid `--reload` |
 | `uvx: command not found` | Install `uv` (`brew install uv`) |
+| Agent says the dbt tools are not available, or `CERTIFICATE_VERIFY_FAILED` from dbt-mcp | dbt-mcp is launched via `sparky.dbt_mcp_launcher`, which drops empty `DBT_*` values and sets `SSL_CERT_FILE` to certifi; run `.venv/bin/python -m sparky.dbt_mcp_launcher` by hand to see its startup errors |
 | Browser login prompt appears mid-demo | dbt OAuth is not logged in on the server; finish the login, then retry |
 | `No recorded transcript` | The question does not match an entry in `demo/transcripts.yaml` for that arm |
 | Arm 1 takes over a minute | Expected: it discovers the schema with many SQL calls. Use `?mock=1` for the live demo |
 
 ## Development
 ```bash
-.venv/bin/pytest -q                  # unit tests (no network or credentials needed; also runs the chart checks under Node if installed)
+.venv/bin/pytest -q                  # unit tests (no network or credentials needed; also runs the chart and chat-history checks under Node if installed)
 .venv/bin/python scripts/bench.py    # live timing/cost benchmark over 6 questions; writes bench.json
 .venv/bin/python scripts/bench.py --cold   # fresh session per question, no warm pool
 ```

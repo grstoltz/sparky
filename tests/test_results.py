@@ -2,7 +2,7 @@ import json
 
 from claude_agent_sdk import AssistantMessage, ToolResultBlock, ToolUseBlock, UserMessage
 
-from sparky.agent import map_message, parse_rows, query_key
+from sparky.agent import map_message, parse_metric_labels, parse_rows, query_key
 
 ARGS = {"metrics": ["enrl_students_budget"],
         "group_by": [{"name": "asuo_term_session__term_season", "type": "dimension"}], "limit": 5}
@@ -68,3 +68,28 @@ def test_exploratory_execute_sql_does_not_make_a_card():
     payload = json.dumps({"schema": {"fields": [{"name": "x", "type": "integer"}]}, "data": [{"x": 1}]})
     evs = map_message(UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=payload)]), calls)
     assert not any(e["type"] == "result_table" for e in evs)
+
+
+LIST_METRICS_CSV = ("# Note: description column omitted\n"
+                    "name,type,label,metadata\n"
+                    "enrl_students_budget,simple,Budgeted enrollment,\"{\"\"short_label\"\": \"\"Enrollments\"\"}\"\n"
+                    "no_label,simple,,\"{\"\"agent_accessible\"\": true}\"\n")
+NAMES = {"enrl_students_budget": {"label": "Budgeted enrollment", "short_label": "Enrollments"}}
+
+
+def test_parse_metric_labels_reads_label_and_short_label():
+    assert parse_metric_labels(LIST_METRICS_CSV) == NAMES
+    assert parse_metric_labels(json.dumps({"result": LIST_METRICS_CSV})) == NAMES
+    # no metadata column (dropped from broad listings): label only
+    assert parse_metric_labels("name,type,label\nx,simple,X\n") == {"x": {"label": "X"}}
+
+
+def test_result_table_carries_labels_from_list_metrics():
+    calls, labels = {}, {}
+    map_message(AssistantMessage(content=[ToolUseBlock(id="l1", name="mcp__dbt__list_metrics", input={})], model="m"), calls, labels)
+    map_message(UserMessage(content=[ToolResultBlock(tool_use_id="l1", content=LIST_METRICS_CSV)]), calls, labels)
+    map_message(AssistantMessage(content=[ToolUseBlock(id="t1", name="mcp__dbt__query_metrics", input=ARGS)], model="m"), calls, labels)
+    evs = map_message(UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=json.dumps(ROWS))]), calls, labels)
+    t = next(e for e in evs if e["type"] == "result_table")
+    assert t["labels"] == {"enrl_students_budget": "Budgeted enrollment"}
+    assert t["short_labels"] == {"enrl_students_budget": "Enrollments"}
