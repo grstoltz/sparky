@@ -1,0 +1,24 @@
+{
+  "_comment": "SAMPLE pack for the demo. The real file is generated from the dbt repo's manifest.json (see data/README.md).",
+  "source": "manifest.json",
+  "metrics": {
+    "enrollment_headcount": {
+      "description": "Distinct enrolled students per term, as of census date.",
+      "context_card": {
+        "expectations": {
+          "healthy_range": "85-92% of applied headcount by census date",
+          "warning_threshold": "below 80%"
+        },
+        "decisions": {
+          "business_rule": "Counted once per student per term, regardless of course count; measured as-of census date, not current date"
+        },
+        "investigations": {
+          "known_structural_causes": [
+            "Online-modality programs have a later effective census date than in-person: expect a temporarily lower in-flight rate that closes by their own census",
+            "Fall B census trails Fall A by several weeks: cross-term comparisons before Fall B's census will show artificially lower numbers"
+          ]
+        }
+      }
+    }
+  }
+}

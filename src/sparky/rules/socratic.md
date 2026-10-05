@@ -32,6 +32,11 @@ questions as possible. Apply this procedure to every new analytical question.
    follow-up question.
 8. **Fail honestly.** If no metric fits, say so and list the nearest metrics. Never fall
    back to guessing.
+9. **Cite context used.** Before concluding anything about an unexpected or unusual result,
+   check the business context cards below. If a `context_card` field changed your conclusion,
+   call `mcp__sparky__cite_context` with the field path(s) (e.g.
+   `investigations.known_structural_causes`) in the same message as your answer. Never narrate
+   this in prose.
 
 ## Efficiency (speed matters: every model turn costs seconds)
 - Batch independent tool calls into a single message; never call them one at a time.

@@ -1,0 +1,56 @@
+# Recorded demo transcripts for MOCK_MODE, keyed by arm, then question.
+# SEED DATA taken from the planning mockup. Replace with real recordings once the star schema
+# and context cards exist and the live queries have run.
+arm1:
+  - question: "Why is Program Q's melt rate so much higher than Program S's this term?"
+    events:
+      - {type: tool_use, id: m1, name: mcp__dbt__execute_sql, input: {sql: "select program, melt_rate from raw.enrollment_summary"}}
+      - type: result_table
+        key: "sql:mock-arm1"
+        id: m1
+        metrics: [melt_rate]
+        columns: [program, melt_rate]
+        group_by: []
+        rows:
+          - {program: Program Q, melt_rate: 0.226}
+          - {program: Program S, melt_rate: 0.093}
+      - {type: sql, key: "sql:mock-arm1", sql: "select program, melt_rate from raw.enrollment_summary"}
+      - type: text
+        text: "Program Q's melt rate is 22.6% versus 9.3% for Program S. I can't explain the gap from the table alone."
+arm2:
+  - question: "Why is Program Q's melt rate so much higher than Program S's this term?"
+    events:
+      - {type: tool_use, id: m1, name: mcp__dbt__list_metrics, input: {}}
+      - {type: tool_use, id: m2, name: mcp__dbt__query_metrics, input: {metrics: [melt_rate]}}
+      - type: result_table
+        key: mock-arm2
+        id: m2
+        metrics: [melt_rate]
+        columns: [program, melt_rate]
+        group_by: []
+        rows:
+          - {program: Program Q, melt_rate: 0.114}
+          - {program: Program S, melt_rate: 0.048}
+      - {type: sql, key: mock-arm2, sql: "SELECT program, COUNT(DISTINCT stdnt_id) ... GROUP BY program"}
+      - type: text
+        text: "Program Q's melt rate is 11.4% versus 4.8% for Program S, so Program Q is underperforming."
+arm3:
+  - question: "Why is Program Q's melt rate so much higher than Program S's this term?"
+    events:
+      - {type: tool_use, id: m1, name: mcp__dbt__list_metrics, input: {}}
+      - {type: tool_use, id: m2, name: mcp__dbt__query_metrics, input: {metrics: [melt_rate]}}
+      - type: result_table
+        key: mock-arm3
+        id: m2
+        metrics: [melt_rate]
+        columns: [program, melt_rate]
+        group_by: []
+        rows:
+          - {program: Program Q, melt_rate: 0.114}
+          - {program: Program S, melt_rate: 0.048}
+      - {type: sql, key: mock-arm3, sql: "SELECT program, COUNT(DISTINCT stdnt_id) ... GROUP BY program"}
+      - type: text
+        text: "Program Q's melt rate is 11.4% versus 4.8% for Program S. Much of the gap is likely structural: Program Q is online, and Fall B's census date trails Fall A's by several weeks, so its in-flight numbers look temporarily lower until its own census. To confirm, I'd compare both programs' melt rates at their own census dates."
+      - type: cite
+        citations:
+          - {metric: enrollment_headcount, path: investigations.known_structural_causes, label: Fall B census offset, text: "Fall B census trails Fall A by several weeks: cross-term comparisons before Fall B's census will show artificially lower numbers"}

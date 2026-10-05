@@ -8,6 +8,7 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "sse-starlette",
+  "pyyaml",
 ]
 
 [project.optional-dependencies]
