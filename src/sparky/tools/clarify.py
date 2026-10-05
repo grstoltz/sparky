@@ -18,6 +18,10 @@ class ClarifyBroker:
         self._emit = emit
         self._pending: dict[str, asyncio.Future[str]] = {}
 
+    @property
+    def emit(self) -> Emit:
+        return self._emit
+
     async def ask(self, question: str, options: list[str], allow_free_text: bool) -> str:
         qid = uuid.uuid4().hex[:8]
         fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
@@ -44,7 +48,7 @@ class ClarifyBroker:
                 fut.cancel()
 
 
-def build_clarify_server(broker: ClarifyBroker):
+def make_clarify_tool(broker: ClarifyBroker) -> SdkMcpTool:
     @tool(
         "ask_clarifying_question",
         "Ask the user ONE Socratic clarifying question with 2-4 concrete options built from "
@@ -69,5 +73,9 @@ def build_clarify_server(broker: ClarifyBroker):
             return {"content": [{"type": "text", "text": "User did not answer."}], "is_error": True}
         return {"content": [{"type": "text", "text": answer}]}
 
-    tools: list[SdkMcpTool] = [ask_clarifying_question]
+    return ask_clarifying_question
+
+
+def build_sparky_server(tools: list[SdkMcpTool]):
+    """In-process MCP server named "sparky" (tool names become mcp__sparky__<name>)."""
     return create_sdk_mcp_server(name="sparky", version="0.1.0", tools=tools)

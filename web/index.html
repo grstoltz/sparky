@@ -2,50 +2,78 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sparky</title>
 <style>
-/* ASU palette: Maroon #8C1D40, Gold #FFC627, Gray 1-7 */
-:root{--maroon:#8C1D40;--gold:#FFC627;--bg:#fff;--fg:#191919;--muted:#484848;--card:#fafafa;--line:#d0d0d0;--accent:var(--maroon);--user-fg:#fff;--focus:var(--maroon)}
-@media(prefers-color-scheme:dark){:root{--bg:#191919;--fg:#fafafa;--muted:#bfbfbf;--card:#262626;--line:#484848;--accent:var(--gold);--user-fg:#191919;--focus:var(--gold)}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Arial,Helvetica,sans-serif;display:flex;flex-direction:column;height:100vh}
-header{display:flex;align-items:center;gap:14px;padding:10px 20px;background:var(--maroon);color:#fff;border-bottom:4px solid var(--gold)}
-header img{height:36px;width:auto;display:block}
-header .title{font-weight:700;font-size:18px;letter-spacing:.2px}header .sub{font-size:13px;opacity:.85;margin-left:auto}
-#log{flex:1;overflow:auto;padding:16px;max-width:820px;width:100%;margin:0 auto}
-.msg{margin:10px 0;padding:10px 14px;border-radius:8px;white-space:pre-wrap;overflow-x:auto}
-.user{background:var(--accent);color:var(--user-fg);margin-left:20%}.bot{background:var(--card);border:1px solid var(--line)}
-.tool{font-size:12px;color:var(--muted);margin:4px 0}
-.clarify{border:2px solid var(--gold);border-left-width:6px;border-radius:8px;padding:12px;margin:10px 0;background:var(--card)}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-button{font:inherit;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:999px;padding:6px 14px;cursor:pointer}
-button:hover:not(:disabled){border-color:var(--maroon);background:var(--gold);color:#191919}
-button:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
-form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);max-width:820px;width:100%;margin:0 auto}
-form button{background:var(--gold);color:#191919;border-color:var(--gold);font-weight:700}
-input{flex:1;font:inherit;padding:10px 14px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
-table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}th{background:var(--maroon);color:#fff}
-.bot{white-space:normal}.bot>:first-child{margin-top:0}.bot>:last-child{margin-bottom:0}
-.bot table{display:block;overflow-x:auto;max-width:100%}.bot code{background:var(--line);padding:1px 4px;border-radius:4px}
-.bot pre{background:var(--line);padding:10px;border-radius:6px;overflow-x:auto}.bot pre code{background:none;padding:0}
+/* ASU palette. Maroon = primary actions; gold = highlights only (mode pill, citation text). */
+:root{--primary:#8C1D40;--primary-foreground:#fff;--accent:#FFC627;--accent-foreground:#2B1D00;--background:#FAFAF9;--foreground:#1A1A1A;--border:#E5E2DD;
+--card:#fff;--muted:#6b665e;--bubble:#EDEAE5;--chip:#2B1D00;--chip-fg:#FFC627;--brand:var(--primary);--focus:var(--primary);
+--maroon:var(--primary);--gold:var(--accent);--bg:var(--background);--fg:var(--foreground);--line:var(--border)}
+@media(prefers-color-scheme:dark){:root{--background:#161513;--foreground:#FAFAF9;--border:#3a3732;--card:#201e1b;--muted:#bdb8ae;--bubble:#33302b;--chip:#FFC627;--chip-fg:#2B1D00;--brand:var(--accent);--focus:var(--accent)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 'Manrope',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;display:flex;flex-direction:column;height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:0 28px;height:60px;background:var(--primary);color:#fff;flex:none}
+.mark{width:32px;height:32px;border-radius:50%;background:#fff;color:var(--primary);display:grid;place-items:center;font-weight:800;font-size:18px;overflow:hidden;flex:none}
+.mark img{width:100%;height:100%;object-fit:contain;padding:3px}
+header .title{font-weight:700;font-size:20px;letter-spacing:.1px}
+#replay{display:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(0,0,0,.3);color:#fff;letter-spacing:.4px}
+/* Mode pill: a styled badge over a transparent select, so it is also the switcher */
+.badge{position:relative;margin-left:auto;display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:999px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap}
+.badge .dot{width:9px;height:9px;border-radius:50%;background:currentColor}
+.badge select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font:inherit}
+.badge:focus-within{outline:3px solid #fff;outline-offset:2px}
+.badge.arm1{background:#DEDAD3;color:#4A4740}
+.badge.arm2{background:#fff;color:var(--primary);box-shadow:inset 0 0 0 1.5px var(--primary)}
+.badge.arm3{background:var(--accent);color:var(--accent-foreground)}
 .layout{flex:1;display:flex;min-height:0}.chat{flex:1;display:flex;flex-direction:column;min-width:0}
+#log{flex:1;overflow:auto;padding:36px 24px 16px;max-width:728px;width:100%;margin:0 auto}
+.msg{margin:0 0 18px;border-radius:20px;overflow-x:auto}
+.user{border-bottom-right-radius:6px;background:var(--bubble);color:var(--fg);width:fit-content;max-width:85%;margin-left:auto;padding:14px 22px;white-space:pre-wrap}
+.bot{background:var(--card);border:1px solid var(--line);padding:18px 22px;white-space:normal;box-shadow:0 1px 2px rgba(26,26,26,.04)}
+.bot>:first-child{margin-top:0}.bot>:last-child{margin-bottom:0}
+.bot table{display:block;overflow-x:auto;max-width:100%}.bot code{background:var(--line);padding:1px 5px;border-radius:5px}
+.bot pre{background:var(--line);padding:10px;border-radius:10px;overflow-x:auto}.bot pre code{background:none;padding:0}
+.tool{font-size:12px;color:var(--muted);margin:2px 0 8px 4px}
+.clarify{border:1px solid var(--line);border-radius:20px;padding:18px 22px;margin:0 0 18px;background:var(--card)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+button{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;padding:8px 16px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+button:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+input:focus-visible{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(140,29,64,.16)}
+/* Citation chip: dark pill with gold text, expands to show the card text */
+.cites{margin:-8px 0 18px;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start}
+.cite{background:var(--chip);color:var(--chip-fg);border-radius:22px;padding:10px 18px;font-size:15px;font-weight:700;max-width:100%}
+.cite summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}.cite summary::-webkit-details-marker{display:none}
+.cite svg{width:17px;height:17px;flex:none}
+.cite .cite-text{margin-top:8px;font-weight:500;font-size:14px;line-height:1.5;opacity:.92}
+form{display:flex;align-items:center;gap:14px;padding:12px 24px 8px;max-width:728px;width:100%;margin:0 auto}
+footer.disclaimer{max-width:728px;width:100%;margin:0 auto;padding:0 24px 18px;text-align:center;font-size:12px;line-height:1.5;color:var(--muted)}
+footer.disclaimer strong{font-weight:700}
+input{flex:1;font:inherit;padding:16px 22px;border-radius:18px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+input::placeholder{color:var(--muted)}
+form button{width:46px;height:46px;padding:0;border-radius:50%;background:var(--primary);border-color:var(--primary);color:#fff;display:grid;place-items:center;flex:none}
+form button:hover:not(:disabled){color:#fff;filter:brightness(1.15)}
+form button svg{width:20px;height:20px}
+table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}th{background:var(--primary);color:#fff}
 #side{display:none;width:48%;border-left:1px solid var(--line);overflow:auto;padding:16px;background:var(--card)}
 .layout.open #side{display:block}
-.rcard{border:1px solid var(--line);border-radius:8px;margin:10px 0;background:var(--bg);overflow:hidden}
-.rhead{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
-.rhead .ttl{font-weight:700;font-size:13px;margin-right:auto}
-.rhead button{padding:3px 10px;font-size:13px}.rhead button.on{background:var(--maroon);color:#fff;border-color:var(--maroon)}
-.rbody{padding:10px;overflow-x:auto}.rbody canvas{max-height:320px}
+.rcard{border:1px solid var(--line);border-radius:20px;margin:0 0 18px;background:var(--card);overflow:hidden}
+.rhead{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.rhead .ttl{font-weight:700;font-size:14px;margin-right:auto}
+.rhead button{padding:4px 12px;font-size:13px}.rhead button.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+.rbody{padding:14px;overflow-x:auto}.rbody canvas{max-height:320px}
 .rbody pre{margin:0;white-space:pre-wrap;font-size:12px}
-.stat{font-size:28px;font-weight:700;color:var(--accent)}.stat small{display:block;font-size:13px;color:var(--muted);font-weight:400}
+.stat{font-size:28px;font-weight:700;color:var(--brand)}.stat small{display:block;font-size:13px;color:var(--muted);font-weight:400}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head><body>
-<header><img src="/assets/logo.svg" alt="" onerror="this.remove()"><span class="title">Sparky</span><span class="sub">Ask your data</span></header>
+<header><span class="mark"><img src="/assets/logo.svg" alt="" onerror="this.remove()"><span id="mark-s">S</span></span><span class="title">Sparky</span><span id="replay" title="Replaying a recorded transcript">RECORDED</span><label class="badge" id="badge"><span class="dot"></span><span id="badge-text"></span><select id="mode" aria-label="Mode"></select></label></header>
 <div class="layout" id="layout"><div class="chat"><div id="log"></div>
-<form id="f"><input id="q" placeholder="Ask a question about your data…" autocomplete="off" autofocus><button>Send</button></form></div><aside id="side"></aside></div>
+<form id="f"><input id="q" placeholder="Ask about enrollment, melt, or a program…" autocomplete="off" autofocus><button aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>
+<footer class="disclaimer"><strong>Powered by EdPlus Action Lab.</strong> Contact Action Lab for analysis confirmation and validation. Sparky uses AI.</footer></div><aside id="side"></aside></div>
 <script>
-let sid=null, bot=null;
-fetch('/warm',{method:'POST'}).catch(()=>{});
+let sid=null, bot=null, mode=null, modes=[];
+{const img=document.querySelector('.mark img');if(img){const hide=()=>{const t=document.getElementById('mark-s');if(t)t.style.display='none'};img.complete&&img.naturalWidth?hide():img.addEventListener('load',hide)}}
+const params=new URLSearchParams(location.search), mock=params.get('mock')==='1';
 // Render model output as markdown; sanitize, and fall back to plain text if the libraries failed to load.
 function md(t){return window.marked&&window.DOMPurify?DOMPurify.sanitize(marked.parse(t)):t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 const log=document.getElementById('log');
@@ -70,7 +98,9 @@ function clarify(ev){
 }
 
 // ---- Explore-style result cards: Chart / Table / SQL ----
-const PAL=['#8C1D40','#FFC627','#00A3E0','#78BE20','#FF7F32','#747474'];
+// Maroon reads poorly on the dark background, so lead with gold there.
+const DARK=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches;
+const PAL=DARK?['#FFC627','#00A3E0','#78BE20','#FF7F32','#E59BB1','#BFBFBF']:['#8C1D40','#FFC627','#00A3E0','#78BE20','#FF7F32','#747474'];
 const cards={};
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 const fmt=v=>typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:2}):String(v??'');
@@ -112,6 +142,32 @@ function resultCard(ev){
   show(canChart?'Chart':'Table');
   return card;
 }
+const CLIP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg>';
+const human=t=>t.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase());
+// "investigations.known_structural_causes" -> "Investigations: Known structural causes" unless the event gives a label
+function citeLabel(c){const parts=c.path.split('.');return human(parts[0])+': '+(c.label||human(parts[parts.length-1]))}
+function addCite(cs){
+  const wrap=el('div','cites');
+  cs.forEach(c=>{const d=el('details','cite');const sm=el('summary');sm.insertAdjacentHTML('beforeend',CLIP);sm.append(el('span',null,citeLabel(c)));
+    d.append(sm,el('div','cite-text',c.text+(c.metric?' ('+c.metric+')':'')));wrap.append(d)});
+  if(bot&&bot.parentNode===log)bot.after(wrap);else log.append(wrap);log.scrollTop=log.scrollHeight;
+}
+// Each arm gets a fresh conversation so one arm's context can never leak into another's answers.
+function setMode(m,reset){
+  mode=m;const info=modes.find(x=>x.id===m)||{label:m};
+  const b=document.getElementById('badge');b.className='badge '+m;document.getElementById('badge-text').textContent=info.label;
+  document.getElementById('mode').value=m;
+  if(reset){sid=null;bot=null;streaming=null;busy=null;log.replaceChildren();document.getElementById('layout').classList.remove('open');document.getElementById('replay').style.display='none'}
+  history.replaceState(null,'','?'+new URLSearchParams({...Object.fromEntries(params),mode:m}));
+  if(!mock)fetch('/warm?mode='+m,{method:'POST'}).catch(()=>{});
+}
+async function init(){
+  const r=await (await fetch('/modes')).json();modes=r.modes;
+  const sel=document.getElementById('mode');
+  modes.forEach(m=>sel.append(Object.assign(document.createElement('option'),{value:m.id,textContent:m.label})));
+  sel.onchange=()=>setMode(sel.value,true);
+  setMode(modes.some(x=>x.id===params.get('mode'))?params.get('mode'):r.default,false);
+}
 let busy=null,streaming=null,streamBuf='';
 function setBusy(on){if(on&&!busy){busy=add('tool','Working…')}else if(!on&&busy){busy.remove();busy=null}if(busy)log.append(busy)}
 function handle(ev){
@@ -123,9 +179,11 @@ function handle(ev){
   else if(ev.type==='text'){
     // The complete block replaces the streamed bubble (if any) so text never appears twice.
     bot=streaming||add('msg bot','');streaming=null;bot.innerHTML=md(ev.text)}
-  else if(ev.type==='tool_use'&&!ev.name.endsWith('ask_clarifying_question'))add('tool','⚙ '+ev.name.replace('mcp__',''));
+  else if(ev.type==='tool_use'&&!/ask_clarifying_question|cite_context$/.test(ev.name))add('tool','⚙ '+ev.name.replace('mcp__',''));
   else if(ev.type==='result_table'){const c=resultCard(ev);cards[ev.key]=c;log.append(c);log.scrollTop=log.scrollHeight}
   else if(ev.type==='sql'){cards[ev.key]?.setSql(ev.sql)}
+  else if(ev.type==='cite')addCite(ev.citations);
+  else if(ev.type==='replay')document.getElementById('replay').style.display='inline-block';
   else if(ev.type==='clarify')clarify(ev);
   else if(ev.type==='error')add('msg bot','Error: '+ev.message);
   else if(ev.type==='done')setBusy(false);
@@ -134,10 +192,11 @@ function handle(ev){
 document.getElementById('f').onsubmit=async e=>{
   e.preventDefault();const q=document.getElementById('q');const text=q.value.trim();if(!text)return;q.value='';
   add('msg user',text);
-  const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,message:text})});
+  const r=await fetch('/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sid,mode,mock,message:text})});
   const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
   for(;;){const {done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true}).replace(/\r\n/g,'\n');
     let i;while((i=buf.indexOf('\n\n'))>=0){const chunk=buf.slice(0,i);buf=buf.slice(i+2);
       const line=chunk.split('\n').find(l=>l.startsWith('data:'));if(line){try{handle(JSON.parse(line.slice(5).trim()))}catch(err){console.error('event failed',err);add('tool','⚠ display error: '+err.message)}}}}
 };
+init();
 </script></body></html>

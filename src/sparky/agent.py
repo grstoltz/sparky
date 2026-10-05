@@ -1,30 +1,39 @@
 """One Agent SDK session per conversation, exposed as an async stream of UI events."""
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from claude_agent_sdk import (
-    AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, StreamEvent,
+    AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage, StreamEvent,
     TextBlock, ToolResultBlock, ToolUseBlock, UserMessage,
 )
 
-from .config import ALLOWED_TOOLS, DBT_TOOLS, DISALLOWED_TOOLS, Settings
-from .tools.clarify import ClarifyBroker, build_clarify_server
+from .config import Settings
+from .context import load_context_cards, render_for_prompt
+from .modes import Mode, get_mode
+from .tools.cite import make_cite_tool
+from .tools.clarify import ClarifyBroker, build_sparky_server, make_clarify_tool
 
 RULES_DIR = Path(__file__).parent / "rules"
 
 
-def load_system_prompt() -> str:
-    return "\n\n".join(p.read_text() for p in sorted(RULES_DIR.glob("*.md")))
+def load_system_prompt(mode: Mode | None = None, pack: dict[str, Any] | None = None) -> str:
+    mode = mode or get_mode(None)
+    parts = [(RULES_DIR / f).read_text() for f in mode.prompt_files]
+    if mode.context and pack:
+        parts.append(render_for_prompt(pack))
+    return "\n\n".join(p for p in parts if p)
 
 
-def dbt_mcp_config(s: Settings) -> dict[str, Any]:
+def dbt_mcp_config(s: Settings, mode: Mode | None = None) -> dict[str, Any]:
+    mode = mode or get_mode(s.mode)
     env = {
         "DBT_HOST": s.dbt_host,
-        # Expose only the semantic-layer tools. Fewer tool schemas means far fewer tokens on every
-        # model turn, and it keeps admin/SQL/CLI tools out of reach (config.py allow-list is the guard).
-        "DBT_MCP_ENABLE_TOOLS": ",".join(DBT_TOOLS),
+        # Expose only this arm's tools. Fewer tool schemas means far fewer tokens on every model
+        # turn, and it keeps admin/CLI tools out of reach (the mode allow-list is the real guard).
+        "DBT_MCP_ENABLE_TOOLS": ",".join(mode.dbt_tools),
     }
     if s.dbt_account_prefix:
         env["MULTICELL_ACCOUNT_PREFIX"] = s.dbt_account_prefix
@@ -35,18 +44,52 @@ def dbt_mcp_config(s: Settings) -> dict[str, Any]:
     return {"type": "stdio", "command": "uvx", "args": ["dbt-mcp"], "env": env}
 
 
-def build_options(s: Settings, broker: ClarifyBroker) -> ClaudeAgentOptions:
+_SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
+_SQL_START = re.compile(r"^\s*\(*\s*(select|with|show|describe|explain)\b", re.I)
+_SQL_WRITE = re.compile(
+    r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|merge|copy|unload|call|vacuum)\b", re.I)
+
+
+def is_read_only_sql(sql: str) -> bool:
+    """Conservative guard for Arm 1: one read statement, no write keywords (even inside strings)."""
+    s = _SQL_COMMENT.sub(" ", sql).strip().rstrip(";")
+    return bool(_SQL_START.match(s)) and ";" not in s and not _SQL_WRITE.search(s)
+
+
+async def _sql_guard(input_data, tool_use_id, context):
+    sql = (input_data.get("tool_input") or {}).get("sql", "")
+    if is_read_only_sql(sql):
+        return {}
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": "Only a single read-only SELECT statement is allowed.",
+    }}
+
+
+def build_options(s: Settings, broker: ClarifyBroker, mode: Mode | None = None,
+                  pack: dict[str, Any] | None = None) -> ClaudeAgentOptions:
+    mode = mode or get_mode(s.mode)
+    mcp: dict[str, Any] = {"dbt": dbt_mcp_config(s, mode)}
+    if mode.uses_sparky_server:
+        tools = []
+        if mode.clarify:
+            tools.append(make_clarify_tool(broker))
+        if mode.cite:
+            tools.append(make_cite_tool(pack or {"metrics": {}}, broker.emit))
+        mcp["sparky"] = build_sparky_server(tools)
+    hooks = {"PreToolUse": [HookMatcher(matcher="mcp__dbt__execute_sql", hooks=[_sql_guard])]}
     return ClaudeAgentOptions(
-        system_prompt=load_system_prompt(),
-        mcp_servers={"dbt": dbt_mcp_config(s), "sparky": build_clarify_server(broker)},
+        system_prompt=load_system_prompt(mode, pack),
+        mcp_servers=mcp,
+        include_partial_messages=True,  # stream text deltas to the UI as the model writes
         # Only the servers above: ignore claude.ai account connectors (Gmail, Drive, ...) that the
         # CLI would otherwise load, and drop all built-in tools (Bash, Edit, ...). Both shrink the
         # per-turn prompt a lot and keep unrelated tools out of the agent's reach.
-        include_partial_messages=True,  # stream text deltas to the UI as the model writes
         strict_mcp_config=True,
         tools=[],
-        allowed_tools=ALLOWED_TOOLS,
-        disallowed_tools=DISALLOWED_TOOLS,
+        allowed_tools=mode.allowed_tools,
+        disallowed_tools=mode.disallowed_tools,
+        hooks=hooks,
         permission_mode="default",
         max_turns=s.max_turns,
         model=s.model,
@@ -58,11 +101,13 @@ def build_options(s: Settings, broker: ClarifyBroker) -> ClaudeAgentOptions:
 
 
 class Session:
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, mode: str | None = None):
         self.settings = settings or Settings()
+        self.mode = get_mode(mode or self.settings.mode)
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.broker = ClarifyBroker(self.events.put)
-        self.client = ClaudeSDKClient(build_options(self.settings, self.broker))
+        pack = load_context_cards(self.settings.context_path) if self.mode.context else None
+        self.client = ClaudeSDKClient(build_options(self.settings, self.broker, self.mode, pack))
         self._connected = False
         self._lock = asyncio.Lock()
         self._calls: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -181,6 +226,25 @@ def parse_rows(text: str) -> list[dict[str, Any]] | None:
     return None
 
 
+def parse_sql_result(text: str) -> tuple[list[dict[str, Any]], list[str], list[str]] | None:
+    """execute_sql returns {"schema": {"fields": [...]}, "data": [rows], "sql": "..."}.
+
+    Returns (rows, columns, numeric_columns), or None if the text is not in that shape.
+    """
+    try:
+        data = json.loads(unwrap_text(text))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        return None
+    rows = data["data"]
+    fields = (data.get("schema") or {}).get("fields") or []
+    cols = [f["name"] for f in fields if "name" in f] or (list(rows[0]) if rows else [])
+    numeric_types = {"integer", "number"}
+    nums = [f["name"] for f in fields if f.get("type") in numeric_types]
+    return rows, cols, nums
+
+
 def map_message(msg: Any, calls: dict[str, tuple[str, dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
     calls = calls if calls is not None else {}
     out: list[dict[str, Any]] = []
@@ -214,6 +278,18 @@ def map_message(msg: Any, calls: dict[str, tuple[str, dict[str, Any]]] | None = 
                         "columns": list(rows[0].keys()) if rows else [],
                         "group_by": args.get("group_by") or [],
                     })
+            elif name.endswith("execute_sql"):
+                # Arm 1: show raw-SQL results in the same card; the SQL is the tool input. The tool's
+                # contract is that only the final, user-facing query passes `visualize`; skip the
+                # exploratory schema-discovery queries so they do not flood the chat with cards.
+                parsed = parse_sql_result(_result_text(b))
+                sql = str(args.get("sql", ""))
+                if parsed and parsed[0] and args.get("visualize"):
+                    rows, cols, nums = parsed
+                    key = "sql:" + sql
+                    out.append({"type": "result_table", "key": key, "id": b.tool_use_id,
+                                "metrics": nums, "rows": rows, "columns": cols, "group_by": []})
+                    out.append({"type": "sql", "key": key, "sql": sql})
             elif name.endswith("get_metrics_compiled_sql"):
                 out.append({"type": "sql", "key": query_key(args), "sql": unwrap_text(_result_text(b))})
     elif isinstance(msg, ResultMessage):

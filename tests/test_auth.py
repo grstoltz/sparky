@@ -1,5 +1,6 @@
 from sparky.agent import dbt_mcp_config
 from sparky.config import Settings
+from sparky.modes import get_mode
 
 
 def test_oauth_when_no_token():
@@ -19,6 +20,6 @@ def test_token_mode():
 
 def test_only_semantic_layer_tools_exposed():
     from sparky.config import DBT_TOOLS
-    env = dbt_mcp_config(Settings(dbt_host="h"))["env"]
+    env = dbt_mcp_config(Settings(dbt_host="h"), get_mode("arm3"))["env"]
     assert env["DBT_MCP_ENABLE_TOOLS"].split(",") == DBT_TOOLS
     assert not any(k.startswith("DISABLE_") for k in env)

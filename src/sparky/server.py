@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -10,17 +11,31 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from .agent import Session, SessionPool
+from .config import Settings
+from .mock import find_transcript, load_transcripts, replay
+from .modes import MODES, get_mode
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+settings = Settings()
 sessions: dict[str, Session] = {}
-pool = SessionPool()
+pools: dict[str, SessionPool] = {}
+
+
+def get_pool(mode: str) -> SessionPool:
+    """One warm-session pool per arm, so switching arms does not pay a cold start."""
+    mode = get_mode(mode).id
+    if mode not in pools:
+        pools[mode] = SessionPool(factory=lambda: Session(settings, mode))
+    return pools[mode]
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    pool.warm()  # connect in the background; startup is not blocked by a first-time login
+    if not settings.mock_mode:
+        get_pool(settings.mode).warm()  # connect in the background; startup is not blocked by a first-time login
     yield
-    await pool.close()
+    for pool in pools.values():
+        await pool.close()
     for s in sessions.values():
         await s.close()
 
@@ -32,6 +47,8 @@ app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="assets")
 class ChatIn(BaseModel):
     session_id: str | None = None
     message: str
+    mode: str | None = None
+    mock: bool = False
 
 
 class AnswerIn(BaseModel):
@@ -45,23 +62,78 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/modes")
+async def modes():
+    return {
+        "default": settings.mode,
+        "mock": settings.mock_mode,
+        "modes": [{"id": m.id, "label": m.label, "short": m.short} for m in MODES.values()],
+    }
+
+
 @app.post("/warm")
-async def warm():
-    pool.warm()
+async def warm(mode: str | None = None):
+    if not settings.mock_mode:
+        get_pool(mode or settings.mode).warm()
     return {"ok": True}
 
 
 @app.post("/chat")
 async def chat(body: ChatIn):
+    try:
+        mode = get_mode(body.mode or settings.mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     sid = body.session_id or uuid.uuid4().hex
-    session = sessions.get(sid)
-    if session is None:
-        session = sessions[sid] = await pool.take()
+    mock = body.mock or settings.mock_mode
+    transcript = find_transcript(load_transcripts(settings.transcripts_path), mode.id, body.message)
+
+    session = None
+    if not mock:
+        session = sessions.get(sid)
+        if session is not None and session.mode.id != mode.id:
+            raise HTTPException(409, "Session belongs to a different mode; start a new conversation")
+        if session is None:
+            session = sessions[sid] = await get_pool(mode.id).take()
 
     async def stream():
-        yield {"event": "session", "data": json.dumps({"type": "session", "session_id": sid})}
-        async for ev in session.ask(body.message):
-            yield {"event": ev["type"], "data": json.dumps(ev)}
+        yield {"event": "session", "data": json.dumps({"type": "session", "session_id": sid, "mode": mode.id})}
+        fallback = mock
+        if not mock:
+            agen = session.ask(body.message).__aiter__()
+            first, shown = True, False  # shown: any answer content reached the user
+            try:
+                while True:
+                    try:
+                        nxt = agen.__anext__()
+                        ev = await (asyncio.wait_for(nxt, settings.live_timeout_s) if first else nxt)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        if transcript:
+                            fallback = True
+                        else:
+                            yield {"event": "error", "data": json.dumps(
+                                {"type": "error", "message": "Timed out waiting for the model"})}
+                            yield {"event": "done", "data": json.dumps({"type": "done"})}
+                        break
+                    first = False
+                    if ev["type"] == "error" and transcript and not shown:
+                        fallback = True
+                        break
+                    if ev["type"] in ("text", "text_delta", "result_table"):
+                        shown = True
+                    yield {"event": ev["type"], "data": json.dumps(ev)}
+            finally:
+                await agen.aclose()
+        if fallback:
+            if transcript is None:
+                msg = "No recorded transcript for this arm and question"
+                yield {"event": "error", "data": json.dumps({"type": "error", "message": msg})}
+                yield {"event": "done", "data": json.dumps({"type": "done"})}
+                return
+            async for ev in replay(transcript):
+                yield {"event": ev["type"], "data": json.dumps(ev)}
 
     return EventSourceResponse(stream())
 

@@ -46,3 +46,25 @@ def test_text_delta_streams_from_partial_messages():
     assert map_message(ev({"type": "text_delta", "text": "Hel"})) == [{"type": "text_delta", "text": "Hel"}]
     assert map_message(ev({"type": "input_json_delta", "partial_json": "{"})) == []
     assert map_message(ev({"type": "text_delta", "text": "x"}, parent="t9")) == []
+
+
+def test_execute_sql_result_becomes_a_card_with_its_sql():
+    payload = json.dumps({
+        "schema": {"fields": [{"name": "x", "type": "integer"}, {"name": "y", "type": "string"}]},
+        "data": [{"x": 1, "y": "a"}], "sql": "select 1 as x, 'a' as y",
+    })
+    calls = {}
+    sql = "select 1 as x, 'a' as y"
+    map_message(AssistantMessage(content=[ToolUseBlock(id="t1", name="mcp__dbt__execute_sql", input={"sql": sql, "visualize": {"x": "y", "y": ["x"]}})], model="m"), calls)
+    evs = map_message(UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=[{"type": "text", "text": payload}])]), calls)
+    t = next(e for e in evs if e["type"] == "result_table")
+    assert t["columns"] == ["x", "y"] and t["metrics"] == ["x"] and t["rows"] == [{"x": 1, "y": "a"}]
+    assert next(e for e in evs if e["type"] == "sql")["sql"] == sql
+
+
+def test_exploratory_execute_sql_does_not_make_a_card():
+    calls = {}
+    map_message(AssistantMessage(content=[ToolUseBlock(id="t1", name="mcp__dbt__execute_sql", input={"sql": "select 1"})], model="m"), calls)
+    payload = json.dumps({"schema": {"fields": [{"name": "x", "type": "integer"}]}, "data": [{"x": 1}]})
+    evs = map_message(UserMessage(content=[ToolResultBlock(tool_use_id="t1", content=payload)]), calls)
+    assert not any(e["type"] == "result_table" for e in evs)
