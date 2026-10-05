@@ -50,7 +50,7 @@ arm3:
           - {program: Program S, melt_rate: 0.048}
       - {type: sql, key: mock-arm3, sql: "SELECT program, COUNT(DISTINCT stdnt_id) ... GROUP BY program"}
       - type: text
-        text: "Program Q's melt rate is 11.4% versus 4.8% for Program S. Much of the gap is likely structural: Program Q is online, and Fall B's census date trails Fall A's by several weeks, so its in-flight numbers look temporarily lower until its own census. To confirm, I'd compare both programs' melt rates at their own census dates."
+        text: "Program Q's melt rate is **11.4%** versus **4.8%** for Program S, a gap of 6.6 points. Much of it is likely structural rather than a performance problem: Program Q is online, and Fall B's census date trails Fall A's by several weeks, so its in-flight numbers look temporarily lower until its own census.\n\n**Suggested follow-ups**\n\n- Compare both programs' melt rates at their own census dates\n- Break the gap down by new versus continuing students\n- Check whether other online programs show the same offset this term"
       - type: cite
         citations:
           - {metric: enrollment_headcount, path: investigations.known_structural_causes, label: Fall B census offset, text: "Fall B census trails Fall A by several weeks: cross-term comparisons before Fall B's census will show artificially lower numbers"}
