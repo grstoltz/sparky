@@ -70,3 +70,11 @@ def test_all_modes_have_prompt_files():
 ])
 def test_read_only_sql_guard(sql, ok):
     assert is_read_only_sql(sql) is ok
+
+
+def test_comparison_rule_is_arm3_only():
+    arm3 = load_system_prompt(get_mode("arm3"), PACK)
+    assert "Comparison questions" in arm3 and "Suggested follow-ups" in arm3
+    assert "do NOT present intermediate results" in arm3
+    for arm in ("arm1", "arm2"):
+        assert "Comparison questions" not in load_system_prompt(get_mode(arm), PACK)

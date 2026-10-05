@@ -113,9 +113,16 @@ rejected (HTTP 409); the UI avoids this by resetting the session when you switch
 - **Arm 1:** the model discovers tables with SQL, so it makes many `execute_sql` calls. Only the final,
   user-facing query gets a result card. Expect it to be the slowest arm and the least consistent.
 - **Arm 2:** one `list_metrics`, one `query_metrics`, a short answer, and a Chart/Table/SQL result card.
+- **Result cards (all arms):** each query result gets a Chart/Table/SQL card. The **chart type dropdown** offers the types that fit the
+  data: bar, horizontal bar, line, area, stacked bar, pie (non-negative values, up to 12 slices) and scatter (two numeric metrics). Time
+  series default to a line, categories to bars. With two dimensions and one metric, the second dimension becomes the series (for example
+  term on the x-axis with one bar per program). The logic is in [web/assets/charts.js](web/assets/charts.js).
 - **Arm 3:** like Arm 2, plus Socratic clarifying questions when the question is ambiguous. When a context-card field
   changed its conclusion, a dark chip with a paperclip (for example "Investigations: Fall B census offset") appears under
   the answer; click it to read the card text.
+  For **comparison questions** (A versus B, "why is X higher than Y"), Arm 3 does not walk through intermediate results: it replies with one short summary
+  (the compared values, the likely explanation, any comparability caveat) and 2-3 suggested follow-up analyses. If a turn runs several
+  queries, their cards are tucked into a collapsed "Supporting queries (N)" expander so they stay available for validation without cluttering the answer.
 
 ### Context pack (Arm 3 only)
 Arm 3 loads [data/context_cards.json](data/context_cards.json) at startup. Arms 1 and 2 never see it, which keeps
@@ -245,7 +252,7 @@ Sparky drives the bundled Claude Code CLI, so it uses whatever login Claude Code
 
 ## Development
 ```bash
-.venv/bin/pytest -q                  # unit tests (no network or credentials needed)
+.venv/bin/pytest -q                  # unit tests (no network or credentials needed; also runs the chart checks under Node if installed)
 .venv/bin/python scripts/bench.py    # live timing/cost benchmark over 6 questions; writes bench.json
 .venv/bin/python scripts/bench.py --cold   # fresh session per question, no warm pool
 ```
