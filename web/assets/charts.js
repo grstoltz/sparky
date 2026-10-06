@@ -21,6 +21,9 @@
     String.raw`\byear[\s-]*(over|on|to)[\s-]*year\b`, String.raw`\b(yoy|y\/y|y-o-y)\b`,
     String.raw`\b(vs\.?|versus|compared?\s+(to|with)|against|than)\s+(the\s+)?(last|prior|previous)\s+year\b`,
     String.raw`\bsame\s+(time|point|period|day|week|month|term|session)\s+(as\s+)?(last|prior|previous)\s+year\b`,
+    // Two years set against each other: 'between 2026 and 2025', 'Fall 2025 vs Fall 2026'
+    String.raw`\bbetween\s+(\w+\s+)?(19|20)\d{2}\s+and\s+(\w+\s+)?(19|20)\d{2}\b`,
+    String.raw`\b(19|20)\d{2}\s+(vs\.?|versus|compared\s+(to|with)|against)\s+(\w+\s+)?(19|20)\d{2}\b`,
   ].join('|'), 'i');
   const TREND_RE = new RegExp([
     String.raw`\bover\s+time\b`, String.raw`\btrend`, String.raw`\btime[\s-]*series\b`, String.raw`\bhistoric`,
@@ -33,13 +36,6 @@
   }
 
   const isNum = (v) => typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && !isNaN(v));
-
-  /* Whether the question asks to see a chart: chart words, or trend / year-over-year wording.
-   * Follow-up questions open on the data unless this is true. */
-  const CHART_RE = /\b(chart|graph|plot|visuali[sz]|visual|draw|diagram)/i;
-  function wantsChart(question) {
-    return CHART_RE.test(String(question || '')) || intentOf(question) !== null;
-  }
 
   function shapeOf(ev, intent) {
     const cols = ev.columns || [];
@@ -86,6 +82,24 @@
   const yearOf = (v) => (String(v ?? '').match(YEAR_RE) || [])[0];
   const stripYear = (v) => String(v ?? '').replace(YEAR_RE, '').replace(/\s{2,}/g, ' ').trim();
   const grainOf = (d) => ((d.match(/__(day|week|month|quarter|year)$/i) || [])[1] || 'day').toLowerCase();
+  /* Place of a period within its year ('Spring', 'Fall A', 'Mar'), or -1 when the text names none. */
+  const SEASON_RANK = { winter: 0, spring: 1, summer: 2, fall: 3, autumn: 3 };
+  function periodRank(v) {
+    const s = String(v ?? ''), season = s.match(/\b(winter|spring|summer|fall|autumn)\b/i);
+    if (season) return SEASON_RANK[season[1].toLowerCase()];
+    return MONTHS.findIndex((m) => new RegExp('\\b' + m, 'i').test(s));
+  }
+  const byPeriod = (a, b) => periodRank(a) - periodRank(b) || String(a).localeCompare(String(b), undefined, { numeric: true });
+  /* Calendar year of a year-bearing label. An academic year ('2025-26 Spring') starts in the fall, so its
+   * winter, spring and summer terms (and January to July) fall in the second year. */
+  function calendarYear(v) {
+    const y = yearOf(v), start = +y.slice(0, 4);
+    if (!/[-\u2013/]/.test(y)) return start;
+    const rest = stripYear(v), season = rest.match(/\b(winter|spring|summer)\b/i), month = periodRank(rest);
+    return start + (season || (!/\b(fall|autumn)\b/i.test(rest) && month >= 0 && month < 7) ? 1 : 0);
+  }
+  /* Earliest first for labels that carry a year: 'Spring 2025' < 'Fall A 2025' < 'Fall B 2025' < 'Fall A 2026'. */
+  const byYearThenPeriod = (a, b) => calendarYear(a) - calendarYear(b) || byPeriod(stripYear(a), stripYear(b));
 
   /* Position within the year for a date, so different years line up: { key (sortable), label }. */
   function seasonal(v, grain) {
@@ -105,8 +119,10 @@
    *  - one date dimension below year grain: the year is the series, the date within the year is x;
    *  - one dimension whose values carry a year ('Fall A 2025'): the year is the series, the rest is x. */
   function yoySplit(shape) {
-    const { rows, metrics, dims, timeDim } = shape;
+    const { rows, metrics, timeDim } = shape;
     if (metrics.length !== 1 || !rows.length) return null;
+    // A dimension with one value (e.g. a term the query filtered to but also grouped by) is not a split.
+    const dims = shape.dims.length > 2 ? shape.dims.filter((d) => new Set(rows.map((r) => String(r[d]))).size > 1) : shape.dims;
     const allYears = (d) => rows.every((r) => yearOf(r[d]));
     let seriesDim, xDim, seriesOf, xOf;
     if (dims.length === 2) {
@@ -135,6 +151,7 @@
     let keys = [...xs.keys()];
     if (keys.every((k) => k !== '' && !isNaN(k))) keys.sort((a, b) => a - b); // week numbers, days to census
     else if (xDim === timeDim) keys.sort();
+    else if (keys.every((k) => periodRank(k) >= 0)) keys.sort(byPeriod); // 'Spring', 'Fall A', 'Fall B'
     const m = metrics[0];
     const datasets = names.map((n) => ({
       label: n,
@@ -149,10 +166,11 @@
   /* Labels and datasets. With two dimensions and one metric, the second dimension becomes the series
    * (e.g. term on x, program as separate bars), which is what comparisons need. */
   function prepare(shape) {
-    const { rows, metrics, dims, timeDim } = shape;
+    const { metrics, dims, timeDim } = shape;
     const yoy = shape.intent === 'yoy' && yoySplit(shape);
     if (yoy) return yoy;
     const xDim = timeDim || dims[0];
+    const rows = isTimeAxis(shape, { xDim }) || isDatedAxis(shape, xDim) ? chronological(shape.rows, xDim) : shape.rows;
     const seriesDim = dims.length >= 2 && metrics.length === 1 ? dims.find((d) => d !== xDim) : null;
 
     if (seriesDim) {
@@ -176,15 +194,39 @@
 
   // Ordinal time offsets, e.g. term_sess_snp_rel_wk_nbr (weeks from session start): a time axis too.
   const REL_TIME_RE = /(^|_)(wk|week|day|month)_?(nbr|num|number)$/i;
+  const isTimeAxis = (shape, p) =>
+    (shape.timeDim !== undefined && p.xDim === shape.timeDim) || REL_TIME_RE.test(p.xDim || '') || YEAR_DIM_RE.test(p.xDim || '');
+  // Category labels that all carry a year ('Fall A 2025', 'Spring 2026', '2025-26 Fall') run in time order too.
+  const isDatedAxis = (shape, d) => !!d && shape.rows.length > 0 && shape.rows.every((r) => yearOf(r[d]));
+  const ISO_RE = /^(19|20)\d{2}(-\d{2}){0,2}([T ][\d:.Z+-]*)?$/; // 2025, 2025-26, 2025-09-01, 2025-09-01T00:00:00
+  /* Rows ordered earliest to latest on `d` when its values are dates, years, offsets or year-bearing terms;
+   * otherwise as given (e.g. term names without a year, which do not sort as text). */
+  function chronological(rows, d) {
+    const vals = rows.map((r) => r[d]);
+    const cmp = vals.every(isNum) ? (a, b) => a[d] - b[d]
+      : vals.every((v) => ISO_RE.test(String(v))) ? (a, b) => String(a[d]).localeCompare(String(b[d]))
+      : vals.every((v) => yearOf(v)) ? (a, b) => byYearThenPeriod(a[d], b[d]) : null;
+    return cmp ? [...rows].sort(cmp) : rows;
+  }
+  // A year-over-year x axis of periods within the year (Fall A/B, sessions, seasons) has its own order.
+  const PERIOD_DIM_RE = /term|sess|season|semester|quarter|qtr|month|week|(^|_)wk|(^|_)day/i;
+
+  /* Prepared labels and datasets reordered by each category's total across datasets, largest first.
+   * Nulls count as 0; ties keep query order. */
+  function byValueDesc(p) {
+    const total = (i) => p.datasets.reduce((s, d) => s + (d.data[i] || 0), 0);
+    const order = p.labels.map((_, i) => i).sort((a, b) => total(b) - total(a));
+    return { ...p, labels: order.map((i) => p.labels[i]), datasets: p.datasets.map((d) => ({ ...d, data: order.map((i) => d.data[i]) })) };
+  }
 
   /* Chart types that make sense for this result, best default first. Empty means "show a stat" (one row)
    * or, with nothing numeric, the table. A time-series x axis defaults to a line, anything else to a bar. */
   function kinds(shape) {
-    const { rows, metrics, timeDim } = shape;
+    const { rows, metrics } = shape;
     if (rows.length < 2 || metrics.length === 0) return [];
     const p = prepare(shape);
     const multi = p.datasets.length > 1;
-    const timeAxis = (timeDim !== undefined && p.xDim === timeDim) || REL_TIME_RE.test(p.xDim || '');
+    const timeAxis = isTimeAxis(shape, p);
     const out = timeAxis ? ['line', 'area', 'bar'] : ['bar', 'hbar', 'line'];
     // Stacking adds series together, which is meaningless across years.
     if (multi && !p.yoy) out.splice(out.indexOf('bar') + 1, 0, 'stacked');
@@ -198,7 +240,12 @@
 
   /* Chart.js config for `kind`. `palette` is an array of CSS colors. */
   function config(kind, shape, palette) {
-    const p = prepare(shape);
+    let p = prepare(shape);
+    const isBar = kind === 'bar' || kind === 'hbar' || kind === 'stacked';
+    // Bars over categories read as a ranking: largest first. Time axes, year-bearing terms ('Fall A 2025'),
+    // year-over-year periods and numbered rows (no dimension) keep their order.
+    if (isBar && shape.dims.length && !isTimeAxis(shape, p) && !isDatedAxis(shape, p.xDim) &&
+      !(p.yoy && PERIOD_DIM_RE.test(p.xDim))) p = byValueDesc(p);
     const color = (i) => palette[i % palette.length];
     const base = { responsive: true, plugins: { legend: { display: p.datasets.length > 1 } }, scales: { y: { beginAtZero: true } } };
 
@@ -220,10 +267,17 @@
       };
     }
     const type = kind === 'line' || kind === 'area' ? 'line' : 'bar';
+    // Bars over time each get their own color (one series: a color per bar). Year-over-year bars broken down
+    // by category sit side by side in one color instead: the latest year solid, earlier years lighter. With
+    // nothing to break down (one x value, e.g. just 'Fall A'), the years get their own colors.
+    const n = p.datasets.length, timeAxis = isTimeAxis(shape, p);
+    const shadeYears = p.yoy && !timeAxis && p.labels.length > 1;
+    const yoyFill = (i) => color(0) + (i === n - 1 ? '' : Math.round(255 * (0.55 + 0.3 * i / Math.max(1, n - 2))).toString(16).padStart(2, '0'));
+    const barFill = (i) => (shadeYears ? yoyFill(i) : timeAxis && n === 1 ? p.labels.map((_, j) => color(j)) : color(i));
     const datasets = p.datasets.map((d, i) => ({
       ...d,
-      borderColor: color(i),
-      backgroundColor: kind === 'area' ? color(i) + '55' : color(i),
+      borderColor: isBar ? barFill(i) : color(i),
+      backgroundColor: kind === 'area' ? color(i) + '55' : isBar ? barFill(i) : color(i),
       fill: kind === 'area',
       tension: 0.2,
     }));
@@ -238,7 +292,7 @@
     return { type, data: { labels: p.labels, datasets }, options };
   }
 
-  const api = { KINDS, intentOf, wantsChart, shapeOf, metricLabel, shortLabel, prepare, kinds, config };
+  const api = { KINDS, intentOf, shapeOf, metricLabel, shortLabel, prepare, kinds, config };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SparkyCharts = api;
 })(typeof window !== 'undefined' ? window : globalThis);

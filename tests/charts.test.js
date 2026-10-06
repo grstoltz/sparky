@@ -78,6 +78,53 @@ assert.deepStrictEqual(cfg('scatter', mm).data.datasets[0].data, [{ x: 1, y: 2 }
 assert.strictEqual(cfg('bar', two).options.plugins.legend.display, true);   // multi-series shows a legend
 assert.strictEqual(cfg('bar', cat).options.plugins.legend.display, false);
 
+// bars over categories are ranked largest first; other kinds keep query order
+const asc = sh(['k', 'n'], ['n'], [{ k: 'a', n: 1 }, { k: 'b', n: 3 }, { k: 'c', n: 2 }]);
+for (const k of ['bar', 'hbar']) {
+  assert.deepStrictEqual(cfg(k, asc).data.labels, ['b', 'c', 'a'], k);
+  assert.deepStrictEqual(cfg(k, asc).data.datasets[0].data, [3, 2, 1], k);
+}
+for (const k of ['line', 'pie']) assert.deepStrictEqual(cfg(k, asc).data.labels, ['a', 'b', 'c'], k);
+// series: categories ranked by their total, every dataset permuted the same way; nulls count as 0
+const ser = sh(['term', 'program', 'n'], ['n'], [
+  { term: 'A', program: 'Q', n: 1 }, { term: 'A', program: 'S', n: 1 },
+  { term: 'B', program: 'Q', n: 5 }, { term: 'B', program: 'S', n: 4 }]);
+for (const k of ['bar', 'stacked']) {
+  assert.deepStrictEqual(cfg(k, ser).data.labels, ['B', 'A'], k);
+  assert.deepStrictEqual(cfg(k, ser).data.datasets.map((d) => d.data), [[5, 1], [4, 1]], k);
+}
+assert.deepStrictEqual(cfg('bar', gap).data.datasets.map((d) => d.data), [[null, 1], [2, null]]);
+// date axes run earliest to latest whatever the query order, a color per bar when there is one series
+const late = sh(['metric_time__month', 'n'], ['n'], [
+  { metric_time__month: '2026-03-01', n: 1 }, { metric_time__month: '2026-01-01', n: 9 }, { metric_time__month: '2026-02-01', n: 5 }]);
+for (const k of ['bar', 'line']) assert.deepStrictEqual(cfg(k, late).data.labels, ['2026-01-01', '2026-02-01', '2026-03-01'], k);
+assert.deepStrictEqual(cfg('bar', late).data.datasets[0].data, [9, 5, 1]);
+assert.deepStrictEqual(cfg('bar', late).data.datasets[0].backgroundColor, PAL.slice(0, 3));
+assert.strictEqual(cfg('line', late).data.datasets[0].backgroundColor, PAL[0]);
+assert.deepStrictEqual(cfg('bar', sh(['acad_yr', 'n'], ['n'], [{ acad_yr: '2026', n: 1 }, { acad_yr: '2025', n: 2 }])).data.labels, ['2025', '2026']);
+assert.deepStrictEqual(cfg('bar', sh(['rel_wk_nbr', 'n'], ['n'], [{ rel_wk_nbr: 3, n: 1 }, { rel_wk_nbr: -1, n: 2 }])).data.labels, ['-1', '3']);
+// terms that carry a year run earliest to latest, not ranked: year first, then the period within it
+const terms = sh(['term', 'n'], ['n'], [{ term: 'Fall A 2026', n: 9 }, { term: 'Spring 2026', n: 1 },
+  { term: 'Fall B 2025', n: 7 }, { term: 'Fall A 2025', n: 3 }, { term: 'Summer 2025', n: 5 }]);
+for (const k of ['bar', 'hbar', 'line']) {
+  assert.deepStrictEqual(cfg(k, terms).data.labels, ['Summer 2025', 'Fall A 2025', 'Fall B 2025', 'Spring 2026', 'Fall A 2026'], k);
+}
+assert.deepStrictEqual(cfg('bar', terms).data.datasets[0].data, [5, 3, 7, 1, 9]);
+assert.deepStrictEqual(cfg('bar', sh(['term', 'program', 'n'], ['n'], [
+  { term: 'Fall A 2026', program: 'Q', n: 9 }, { term: 'Fall A 2025', program: 'Q', n: 3 },
+  { term: 'Fall A 2026', program: 'S', n: 1 }, { term: 'Fall A 2025', program: 'S', n: 2 }])).data.labels, ['Fall A 2025', 'Fall A 2026']);
+// an academic year starts in the fall: its spring and summer come after its fall
+assert.deepStrictEqual(cfg('bar', sh(['term', 'n'], ['n'], [{ term: '2026-27 Fall', n: 9 }, { term: '2025-26 Summer', n: 4 },
+  { term: '2025-26 Spring', n: 1 }, { term: '2025-26 Fall', n: 7 }])).data.labels,
+['2025-26 Fall', '2025-26 Spring', '2025-26 Summer', '2026-27 Fall']);
+// several series over dates: a color per series
+assert.deepStrictEqual(cfg('bar', { ...two, timeDim: 'term' }).data.datasets.map((d) => d.backgroundColor), [PAL[0], PAL[1]]);
+// time axes, year-over-year periods and numbered rows keep their order
+assert.deepStrictEqual(cfg('bar', time).data.labels, ['2026-09-22', '2026-09-23']);
+assert.deepStrictEqual(cfg('bar', sh(['term_sess_snp_rel_wk_nbr', 'n'], ['n'],
+  [{ term_sess_snp_rel_wk_nbr: -2, n: 1 }, { term_sess_snp_rel_wk_nbr: -1, n: 2 }])).data.labels, ['-2', '-1']);
+assert.deepStrictEqual(cfg('bar', nodim).data.labels, ['1', '2']);
+
 // friendly metric names: the semantic-layer label when given, else a humanized metric name
 const lab = C.shapeOf({ ...ev(['season', 'enrl_students_budget'], ['enrl_students_budget'],
   [{ season: 'Fall', enrl_students_budget: 5 }, { season: 'Summer', enrl_students_budget: 3 }]),
@@ -98,17 +145,15 @@ const tip = cfg('bar', twoLab).options.plugins.tooltip.callbacks.label;
 assert.strictEqual(tip({ dataset: { label: 'Q' }, formattedValue: '10' }), 'Q · Headcount: 10');
 assert.strictEqual(cfg('scatter', { ...mm, labels: { a: 'Apps' } }).options.scales.x.title.text, 'Apps');
 
-// wantsChart: chart words, or trend / year-over-year wording
-for (const q of ['Can you chart that?', 'graph it by program', 'plot it', 'visualize by term', 'and over time?', 'year over year?'])
-  assert.ok(C.wantsChart(q), q);
-for (const q of ['what about Program S?', 'and for graduate students', '', null]) assert.ok(!C.wantsChart(q), q);
-
 // question intent
 for (const q of ['Enrollment year over year', 'Show YoY melt', 'Fall A vs last year', 'how does it compare to the prior year?',
-  'same point last year', 'year-on-year growth']) assert.strictEqual(C.intentOf(q), 'yoy', q);
+  'same point last year', 'year-on-year growth', 'Which programs had the largest decrease between 2026 and 2025 for fall a?',
+  'between Fall 2025 and Fall 2026', '2025 vs 2026 enrollment', 'Fall 2026 compared to Fall 2025'])
+  assert.strictEqual(C.intentOf(q), 'yoy', q);
 for (const q of ['Enrollment over time', 'melt trend', 'monthly applications', 'enrollment by term', 'over the last 6 weeks'])
   assert.strictEqual(C.intentOf(q), 'trend', q);
-for (const q of ['Enrollment by program', 'How many students last year?', '', null]) assert.strictEqual(C.intentOf(q), null, q);
+for (const q of ['Enrollment by program', 'How many students last year?', 'enrollment in 2025', 'the 2025-2026 academic year', '', null])
+  assert.strictEqual(C.intentOf(q), null, q);
 
 // without a time-series x axis the default is a bar, whatever the wording
 assert.deepStrictEqual(C.kinds({ ...cat, intent: 'trend' }), ['bar', 'hbar', 'line', 'pie']);
@@ -126,8 +171,29 @@ const pyy = C.prepare(yy);
 assert.deepStrictEqual(pyy.labels, ['Fall A', 'Fall B']);
 assert.deepStrictEqual(pyy.datasets.map((d) => [d.label, d.data]), [['2025', [10, 7]], ['2026', [12, 8]]]);
 assert.deepStrictEqual(C.kinds(yy), ['bar', 'hbar', 'line']);
-// the same rows without yoy intent keep the old layout (first dimension on x)
-assert.deepStrictEqual(C.prepare({ ...yy, intent: null }).labels, ['2026', '2025']);
+// periods stay in order, not ranked, even when a later one is larger
+assert.deepStrictEqual(C.config('bar', { ...yy, rows: yy.rows.map((r) => ({ ...r, n: r.n * (r.asuo_term_session__term_sess_type === 'Fall B' ? 10 : 1) })) }, PAL)
+  .data.labels, ['Fall A', 'Fall B']);
+// the same rows without yoy intent keep the old layout (first dimension on x), years earliest first
+assert.deepStrictEqual(C.prepare({ ...yy, intent: null }).labels, ['2025', '2026']);
+
+// yoy by program (term filtered but still grouped by): programs on x ranked largest first, the two years side by
+// side in one color, the earlier year lighter
+const prog = C.shapeOf(ev(['asuo_term_session__acad_yr', 'asuo_term_session__term_sess_type', 'acad_plan', 'n'], ['n'], [
+  { asuo_term_session__acad_yr: '2025', asuo_term_session__term_sess_type: 'Fall A', acad_plan: 'Q', n: 10 },
+  { asuo_term_session__acad_yr: '2026', asuo_term_session__term_sess_type: 'Fall A', acad_plan: 'Q', n: 8 },
+  { asuo_term_session__acad_yr: '2025', asuo_term_session__term_sess_type: 'Fall A', acad_plan: 'S', n: 30 },
+  { asuo_term_session__acad_yr: '2026', asuo_term_session__term_sess_type: 'Fall A', acad_plan: 'S', n: 20 }]), 'yoy');
+const progBar = C.config('bar', prog, PAL);
+assert.deepStrictEqual(progBar.data.labels, ['S', 'Q']);
+assert.deepStrictEqual(progBar.data.datasets.map((d) => [d.label, d.data]), [['2025', [30, 10]], ['2026', [20, 8]]]);
+assert.deepStrictEqual(progBar.data.datasets.map((d) => d.backgroundColor), [PAL[0] + '8c', PAL[0]]);
+assert.strictEqual(C.config('line', prog, PAL).data.datasets[1].borderColor, PAL[1]); // lines keep a color per year
+// years with no breakdown (the only x value is the filtered term): distinct colors, not shades
+const one = C.shapeOf(ev(['asuo_term_session__acad_yr', 'asuo_term_session__term_sess_type', 'n'], ['n'], [
+  { asuo_term_session__acad_yr: '2025', asuo_term_session__term_sess_type: 'Fall A', n: 10 },
+  { asuo_term_session__acad_yr: '2026', asuo_term_session__term_sess_type: 'Fall A', n: 8 }]), 'yoy');
+assert.deepStrictEqual(C.config('bar', one, PAL).data.datasets.map((d) => d.backgroundColor), [PAL[0], PAL[1]]);
 
 // yoy pacing: weeks relative to session start on x, one series per term ('Fall 2025', 'Fall 2026'), numeric x order
 const pace = C.shapeOf(ev(['term_descr', 'rel_wk_nbr', 'n'], ['n'], [
@@ -148,6 +214,8 @@ assert.strictEqual(C.kinds(mon)[0], 'line');
 assert.deepStrictEqual(pm.datasets.map((d) => [d.label, d.data]), [['2025', [1, 2]], ['2026', [3, 4]]]);
 assert.strictEqual(C.config('line', mon, PAL).options.plugins.tooltip.callbacks.label(
   { dataset: { label: '2026' }, formattedValue: '3' }), '2026 · N: 3');
+// yoy over a date axis (months): years get distinct colors, not the light/dark shading
+assert.deepStrictEqual(C.config('bar', mon, PAL).data.datasets.map((d) => d.backgroundColor), [PAL[0], PAL[1]]);
 
 // yoy over one year-bearing label: the year becomes the series, the rest the x value
 const lab1 = C.prepare(C.shapeOf(ev(['term_sess_descr', 'n'], ['n'], [
