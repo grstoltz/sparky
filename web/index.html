@@ -16,8 +16,8 @@ try{const t=localStorage.getItem('sparky.theme');if(t==='light'||t==='dark')docu
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 'Manrope',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;display:flex;flex-direction:column;height:100vh}
 header{display:flex;align-items:center;gap:12px;padding:0 28px;height:60px;background:var(--primary);color:#fff;flex:none}
-.mark{width:32px;height:32px;border-radius:50%;background:#fff;color:var(--primary);display:grid;place-items:center;font-weight:800;font-size:18px;overflow:hidden;flex:none}
-.mark img{width:100%;height:100%;object-fit:cover}
+header .logo{height:28px;width:auto;min-width:0;flex:0 1 auto;object-fit:contain}
+
 header .title{font-weight:700;font-size:20px;letter-spacing:.1px}
 #replay{display:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(0,0,0,.3);color:#fff;letter-spacing:.4px}
 /* Mode pill: a styled badge over a transparent select, so it is also the switcher */
@@ -117,7 +117,7 @@ button:disabled{cursor:default;opacity:.6}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head><body>
-<header><button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle chat history" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><span class="mark"><img src="/assets/al.png" alt="" onerror="this.remove()"><span id="mark-s">A</span></span><span class="title">AL</span><span id="replay" title="Replaying a recorded transcript">RECORDED</span><label class="badge" id="badge"><span class="dot"></span><span id="badge-text"></span><select id="mode" aria-label="Mode"></select></label><button id="theme-toggle" class="nav-toggle" type="button"></button></header>
+<header><button id="nav-toggle" class="nav-toggle" type="button" aria-label="Toggle chat history" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><img class="logo" src="/assets/action-lab-logo.png" alt="EdPlus Action Lab, Arizona State University"><span id="replay" title="Replaying a recorded transcript">RECORDED</span><label class="badge" id="badge"><span class="dot"></span><span id="badge-text"></span><select id="mode" aria-label="Mode"></select></label><button id="theme-toggle" class="nav-toggle" type="button"></button></header>
 <div class="layout" id="layout"><nav id="nav" aria-label="Chat history">
 <button id="new-chat" class="new-chat" type="button">+ New chat</button>
 <ul id="chat-list"></ul>
@@ -125,13 +125,12 @@ button:disabled{cursor:default;opacity:.6}
 </nav><div class="chat"><div id="log"></div>
 <button id="scroll-hint" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>The answer continues below</button>
 <form id="f"><input id="q" placeholder="Ask about enrollment, melt, or a program…" autocomplete="off" autofocus><button aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>
-<footer class="disclaimer"><strong>Powered by EdPlus Action Lab.</strong> Contact Action Lab for analysis confirmation and validation. AL uses AI.</footer></div><aside id="side"></aside></div>
+<footer class="disclaimer"><strong>AL — powered by Action Lab.</strong> AL uses AI and can make mistakes. Contact Action Lab to confirm and validate any analysis before you rely on it.</footer></div><aside id="side"></aside></div>
 <script>
 let sid=null, bot=null, mode=null, modes=[];
 // Chat history (web/assets/history.js): the open chat record, the store, and replay/save state.
 let chat=null, store=null, replaying=false, saveTimer=null, pendingSid=null, warnedQuota=false;
 const pendingSql={};  // compiled SQL that arrived before its result card
-{const img=document.querySelector('.mark img');if(img){const hide=()=>{const t=document.getElementById('mark-s');if(t)t.style.display='none'};img.complete&&img.naturalWidth?hide():img.addEventListener('load',hide)}}
 const params=new URLSearchParams(location.search), mock=params.get('mock')==='1';
 // Render model output as markdown; sanitize, and fall back to plain text if the libraries failed to load.
 function md(t){return window.marked&&window.DOMPurify?DOMPurify.sanitize(marked.parse(t)):t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
