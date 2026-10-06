@@ -35,6 +35,13 @@
     return YOY_RE.test(q) ? 'yoy' : TREND_RE.test(q) ? 'trend' : null;
   }
 
+  /* Whether the question asks to see a chart: chart words, or trend / year-over-year wording.
+   * Follow-up questions open on the data unless this is true. */
+  const CHART_RE = /\b(chart|graph|plot|visuali[sz]|visual|draw|diagram)/i;
+  function wantsChart(question) {
+    return CHART_RE.test(String(question || '')) || intentOf(question) !== null;
+  }
+
   const isNum = (v) => typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && !isNaN(v));
 
   function shapeOf(ev, intent) {
@@ -292,7 +299,7 @@
     return { type, data: { labels: p.labels, datasets }, options };
   }
 
-  const api = { KINDS, intentOf, shapeOf, metricLabel, shortLabel, prepare, kinds, config };
+  const api = { KINDS, intentOf, wantsChart, shapeOf, metricLabel, shortLabel, prepare, kinds, config };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SparkyCharts = api;
 })(typeof window !== 'undefined' ? window : globalThis);

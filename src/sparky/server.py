@@ -41,7 +41,7 @@ async def lifespan(_: FastAPI):
         await s.close()
 
 
-app = FastAPI(title="Sparky", lifespan=lifespan)
+app = FastAPI(title="AL", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory=WEB_DIR / "assets"), name="assets")
 
 
